@@ -1,0 +1,11 @@
+/dist/
+/.omx/
+.DS_Store
+__pycache__/
+.env
+.env.*
+*.p12
+*.p8
+*.key
+*.mobileprovision
+*.provisionprofile
