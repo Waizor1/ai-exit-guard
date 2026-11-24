@@ -130,6 +130,15 @@ m.policyDate={RegionPolicy.reviewed.addingTimeInterval(86400)}
 m.proxyAllowsProbe={true}
 func repeated(_ status:String)->[String]{Array(repeating:status,count:4)}
 result(repeated("green"),.clear)
+// A missing answer triggers one early round. A second failure returns
+// to the ordinary schedule, and success requires fresh evidence.
+result(repeated("unknown"),.caution)
+m.tick(now:Date().addingTimeInterval(7));precondition(m.running)
+waitUntil{!m.running}
+m.tick(now:Date().addingTimeInterval(15));precondition(!m.running)
+result(repeated("unknown"),.caution)
+fixture(repeated("green"));m.tick(now:Date().addingTimeInterval(7))
+precondition(m.running);waitUntil{!m.running};precondition(m.overall == .clear)
 result(repeated("amber"),.caution)
 result(repeated("red"),.avoid)
 result(["green","green","green","red"],.avoid)

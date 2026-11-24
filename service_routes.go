@@ -168,6 +168,9 @@ func googleRegion(ctx context.Context, s proxySpec) (string, error) {
 		return "", err
 	}
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusGatewayTimeout {
+		return "", errGatewayTimeout
+	}
 	if res.StatusCode != 200 {
 		return "", fmt.Errorf("Google HTTP %d", res.StatusCode)
 	}
@@ -184,7 +187,7 @@ func googleRegion(ctx context.Context, s proxySpec) (string, error) {
 
 func checkGoogle(ctx context.Context, ep proxySpec) result {
 	r := result{Host: googleHost, Status: "unknown", Checked: time.Now().UTC().Format(time.RFC3339)}
-	country, err := googleRegion(ctx, ep)
+	country, err := retryNetworkOnce(ctx, func() (string, error) { return googleRegion(ctx, ep) })
 	if err != nil {
 		r.Detail = "Не удалось проверить страну Google"
 		return r
@@ -192,7 +195,7 @@ func checkGoogle(ctx context.Context, ep proxySpec) result {
 	r.TraceCountry = country
 	probe := ep.probeClient()
 	defer probe.CloseIdleConnections()
-	b, _, err := get(ctx, probe, api+"/ip.json")
+	b, err := probeBody(ctx, probe, api+"/ip.json")
 	var who struct{ IP string }
 	if err != nil || json.Unmarshal(b, &who) != nil {
 		return r
@@ -205,7 +208,7 @@ func checkGoogle(ctx context.Context, ep proxySpec) result {
 	c := checker{ctx: ctx, client: newClient()}
 	defer c.client.CloseIdleConnections()
 	r.Risk = c.general(r.IP).value
-	b, _, err = get(ctx, c.client, "https://ipinfo.io/"+url.PathEscape(r.IP)+"/json")
+	b, err = probeBody(ctx, c.client, "https://ipinfo.io/"+url.PathEscape(r.IP)+"/json")
 	if err == nil {
 		info, e := decodeInfo(b, r.IP)
 		if e == nil {

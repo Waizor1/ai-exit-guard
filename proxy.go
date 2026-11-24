@@ -86,6 +86,9 @@ func (s proxySpec) tunnel(ctx context.Context, host string) (net.Conn, error) {
 	if e != nil {
 		return nil, e
 	}
+	raw := c
+	stopClose := context.AfterFunc(ctx, func() { raw.Close() })
+	defer stopClose()
 	c.SetDeadline(time.Now().Add(12 * time.Second))
 	if s.Scheme == "https" {
 		secure := tls.Client(c, &tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12})
@@ -105,7 +108,9 @@ func (s proxySpec) tunnel(ctx context.Context, host string) (net.Conn, error) {
 				var response *http.Response
 				response, e = http.ReadResponse(bufio.NewReader(io.LimitReader(c, 65536)), &req)
 				if e == nil && response.StatusCode != 200 {
-					if response.StatusCode == 407 {
+					if response.StatusCode == http.StatusGatewayTimeout {
+						e = errGatewayTimeout
+					} else if response.StatusCode == 407 {
 						e = errProxyAuth
 					} else {
 						e = errors.New("proxy refused tunnel")
@@ -131,7 +136,10 @@ func (s proxySpec) socks(c net.Conn, host string) error {
 		return e
 	}
 	b, e := read(2)
-	if e != nil || b[0] != 5 || b[1] != method {
+	if e != nil {
+		return e
+	}
+	if b[0] != 5 || b[1] != method {
 		return errors.New("SOCKS authentication method")
 	}
 	if method == 2 {
@@ -142,7 +150,10 @@ func (s proxySpec) socks(c net.Conn, host string) error {
 			return e
 		}
 		b, e = read(2)
-		if e != nil || b[0] != 1 || b[1] != 0 {
+		if e != nil {
+			return e
+		}
+		if b[0] != 1 || b[1] != 0 {
 			return errProxyAuth
 		}
 	}
@@ -152,7 +163,10 @@ func (s proxySpec) socks(c net.Conn, host string) error {
 		return e
 	}
 	b, e = read(4)
-	if e != nil || b[0] != 5 || b[1] != 0 {
+	if e != nil {
+		return e
+	}
+	if b[0] != 5 || b[1] != 0 {
 		return errors.New("SOCKS tunnel")
 	}
 	var n int
@@ -195,8 +209,21 @@ func (s proxySpec) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Guard has paused AI connections", http.StatusServiceUnavailable)
 		return
 	}
-	peer, e := s.tunnel(window, host)
+	connectCtx, cancel := context.WithCancel(r.Context())
+	stop := context.AfterFunc(window, cancel)
+	defer cancel()
+	defer stop()
+	peer, e := retryNetworkOnce(connectCtx, func() (net.Conn, error) {
+		if err := window.Err(); err != nil {
+			return nil, err
+		}
+		return s.tunnel(connectCtx, host)
+	})
 	if e != nil {
+		if window.Err() != nil {
+			http.Error(w, "Guard has paused AI connections", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "AI proxy unavailable", 502)
 		return
 	}

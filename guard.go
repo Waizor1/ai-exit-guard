@@ -77,6 +77,9 @@ func get(ctx context.Context, c *http.Client, addr string) ([]byte, net.Conn, er
 		return nil, nil, err
 	}
 	defer r.Body.Close()
+	if r.StatusCode == http.StatusGatewayTimeout {
+		return nil, nil, errGatewayTimeout
+	}
 	if r.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("HTTP %d", r.StatusCode)
 	}
@@ -86,6 +89,42 @@ func get(ctx context.Context, c *http.Client, addr string) ([]byte, net.Conn, er
 	}
 	return b, conn, err
 }
+
+var errGatewayTimeout = errors.New("HTTP 504")
+
+// Only callers performing read-only probes or opening a new tunnel may retry.
+// No model request or established stream is replayed.
+func retryNetworkOnce[T any](ctx context.Context, attempt func() (T, error)) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	value, err := attempt()
+	if err == nil {
+		return value, nil
+	}
+	var netErr net.Error
+	transient := errors.Is(err, errGatewayTimeout) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || (errors.As(err, &netErr) && netErr.Timeout())
+	if !transient || ctx.Err() != nil {
+		return value, err
+	}
+	timer := time.NewTimer(350 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return value, ctx.Err()
+	case <-timer.C:
+	}
+	if ctx.Err() != nil {
+		return value, ctx.Err()
+	}
+	return attempt()
+}
+
+func probeBody(ctx context.Context, c *http.Client, addr string) ([]byte, error) {
+	return retryNetworkOnce(ctx, func() ([]byte, error) { b, _, err := get(ctx, c, addr); return b, err })
+}
+
 func canonical(raw string) (string, error) {
 	ip, err := netip.ParseAddr(raw)
 	if err != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.Zone() != "" {
@@ -234,11 +273,7 @@ type checker struct {
 func (c *checker) general(ip string) riskReport {
 	raw, _ := c.risk.LoadOrStore(ip, sync.OnceValue(func() riskReport {
 		address := api + "/search_ip_page?ip=" + url.QueryEscape(ip)
-		b, _, err := get(c.ctx, c.client, address)
-		var temporary net.Error
-		if errors.As(err, &temporary) && temporary.Timeout() && c.ctx.Err() == nil {
-			b, _, err = get(c.ctx, c.client, address)
-		}
+		b, err := probeBody(c.ctx, c.client, address)
 		if err != nil {
 			return riskReport{err: err}
 		}
@@ -420,7 +455,7 @@ func (c *checker) resultsFor(selected []target) <-chan result {
 			raw, _ := cached.LoadOrStore(r.IP, &enrichment{})
 			e := raw.(*enrichment)
 			e.once.Do(func() {
-				b, _, err := get(c.ctx, c.client, "https://ipinfo.io/"+r.IP+"/json")
+				b, err := probeBody(c.ctx, c.client, "https://ipinfo.io/"+r.IP+"/json")
 				if err == nil {
 					e.info, err = decodeInfo(b, r.IP)
 				}

@@ -76,6 +76,7 @@ final class Monitor: NSObject, ObservableObject {
     static let maxAge: TimeInterval = 180
     private let iso = ISO8601DateFormatter()
     private var lastAttempt = Date.distantPast
+    private var retryAt:Date?
     @Published private(set) var received = Set<String>()
     // This helper opens direct connections. A system proxy can give clients another exit.
     static func proxyEnabled(_ settings: [String: Any]) -> Bool {
@@ -172,22 +173,32 @@ final class Monitor: NSObject, ObservableObject {
         }
         if current != fresh {fresh=current;changed?()}
         let elapsed=now.timeIntervalSince(lastAttempt)
-        if running && (elapsed>110 || elapsed<0) {invalidate("Проверка не завершилась вовремя.")}
-        if online && !running && (elapsed>=Self.refreshInterval || elapsed<0) {check()}
+        // A stalled monitor provides no new evidence. Existing relay leases
+        // retain their original expiry and the next check runs automatically.
+        if running && elapsed>110 {invalidate("Проверяем соединение повторно.",closeAll:false)}
+        if running && elapsed<0 {invalidate("Время системы изменилось.")}
+        // Start earlier for pinned routes to leave room for a timeout and retry.
+        let interval = proxy.expected.isEmpty ? Self.refreshInterval : 90
+        guard online, !running else {return}
+        if let retryAt, now >= retryAt {startCheck(isRetry:true)}
+        else if elapsed>=interval || elapsed<0 {check()}
     }
     private var process: Process?
     private var generation = 0
     private var notified = Set<String>()
     private let legacy = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/local.aiexitguard.menu.plist")
     func invalidate(_ message:String, closeAll:Bool=true) {
+        retryAt=nil
         if closeAll {proxy.setLease(0)}
         generation += 1
         if let p=process,p.isRunning {p.terminate()}
         process=nil;previous.removeAll();fresh.removeAll();received.removeAll();running=false;note=message;changed?()
     }
-    func check() {
+    func check() {startCheck(isRetry:false)}
+    private func startCheck(isRetry:Bool) {
         updateProxy()
         guard online, directProbeAllowed, !running else{return}
+        retryAt=nil
         previous.removeAll()
         for host in fresh {
             if let row=rows[host], let stamp=iso.date(from:row.Checked) {previous[host]=(finding(host),stamp)}
@@ -259,6 +270,15 @@ final class Monitor: NSObject, ObservableObject {
                     if deadline > 0 || self.overall == .avoid { self.proxy.setLease(deadline) }
                 }
                 if self.received.count != self.monitoredHosts.count || p.terminationStatus != 0 {self.note="Часть результатов недоступна"}
+                let missing = self.monitoredHosts.contains { host in
+                    switch self.finding(host) {
+                    case .domainUnavailable, .riskUnavailable, .infoUnavailable, .trustUnavailable, .incomplete: return true
+                    default: return false
+                    }
+                }
+                if !isRetry && (missing || p.terminationStatus != 0) {
+                    self.retryAt=Date().addingTimeInterval(5)
+                }
                 self.changed?()
             }
         }

@@ -191,10 +191,11 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 	fmt.Fprintln(output, "READY")
 	state := map[string]desktopRoute{}
 	for ctx.Err() == nil {
+		nextCheck := time.Now().Add(90 * time.Second)
 		refreshDesktop(ctx, c, relay, countries, state, output)
 		select {
 		case <-ctx.Done():
-		case <-time.After(90 * time.Second):
+		case <-time.After(max(5*time.Second, time.Until(nextCheck))):
 		}
 	}
 	return 0
