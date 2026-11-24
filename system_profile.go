@@ -19,7 +19,7 @@ func writeSystemProfile(w io.Writer, platform string) error {
 	add := func(name, process, proto, hosts, ports, action string) {
 		if windows {
 			ips, domains := "*", hosts
-			if hosts == "127.0.0.1" {
+			if hosts == "127.0.0.1" || hosts == ingressIP {
 				ips, domains = hosts, "*"
 			}
 			rules = append(rules, fields{"Name": name, "ProcessName": process, "Protocol": proto, "TargetHosts": ips, "TargetDomains": domains, "TargetPorts": ports, "Action": action, "ProxyConfigId": 1, "IsEnabled": true, "LocalhostViaProxy": process != "*"})
@@ -36,6 +36,7 @@ func writeSystemProfile(w io.Writer, platform string) error {
 	}
 	for _, client := range clients {
 		add("Local Guard", client, "TCP", "127.0.0.1", "39178", "DIRECT")
+		add("Local TLS ingress", client, "TCP", ingressIP, "443", "DIRECT")
 		add("Protected client", client, "TCP", "*", "443", "PROXY")
 		add("Block other TCP", client, "TCP", "*", "*", "BLOCK")
 		add("Block UDP", client, "UDP", "*", "*", "BLOCK")
