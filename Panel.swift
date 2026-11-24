@@ -7,21 +7,6 @@ struct GuardPanel: View {
     }
     private var selectedHosts:[String] {model.selectedService.map(hosts) ?? model.monitoredHosts}
     private var verdict:Recommendation {model.displayed(selectedHosts)}
-    private var reason:String {
-        if !model.online {return "Подключитесь к интернету. Проверка начнётся автоматически."}
-        if !model.directProbeAllowed && !model.proxy.expected.isEmpty {return "Маршрут прокси не подтверждён. Проверьте подключение в настройках Guard."}
-        if !model.directProbeAllowed {return "Системный прокси мешает проверить подключение. Отложите вход."}
-
-        if let region=model.rows[Monitor.googleHost]?.TraceCountry,
-           selectedHosts.contains(Monitor.googleHost),model.fresh.contains(Monitor.googleHost),model.finding(Monitor.googleHost) == .unsupportedCountry {
-            return "Google видит "+(Locale(identifier:"ru").localizedString(forRegionCode:region) ?? region)+". Выберите другой прокси для Antigravity."
-        }
-        let worst=selectedHosts.map {model.displayedFinding($0)}.max { $0.rawValue < $1.rawValue } ?? .waiting
-        if worst == .clear && verdict == .caution {
-            return "Guard ждёт подтверждения прокси. Доступ откроется после проверки."
-        }
-        return worst.explanation
-    }
     var body:some View {
         VStack(alignment:.leading,spacing:14) {
             HStack {
@@ -90,7 +75,7 @@ struct GuardPanel: View {
                     Label(model.selectedService ?? "Доступ к ИИ",systemImage:verdict.symbol)
                         .font(.subheadline.weight(.semibold)).foregroundStyle(Color(nsColor:verdict.color))
                     Text(verdict.title).font(.system(size:25,weight:.bold))
-                    Text(reason).font(.body).fixedSize(horizontal:false,vertical:true)
+                    Text(model.explanation(for:selectedHosts)).font(.body).fixedSize(horizontal:false,vertical:true)
                 }.padding(16).frame(maxWidth:.infinity,alignment:.leading)
                  .background(Color(nsColor:verdict.color).opacity(0.10),in:RoundedRectangle(cornerRadius:14))
                 if let service=model.selectedService {

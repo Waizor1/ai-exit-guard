@@ -32,7 +32,13 @@ enum ProxyVault {
     static func read()->Data? {value}
     static func clear(){value=nil}
 }
-""" + proxy_source[route_end:])
+""" + proxy_source[route_end:] + """
+extension ProxyClient {
+    func fixtureLease(_ ip:String, until:Int64) {
+        expected=ip;ready=true;assessmentSpec=Data();allowedUntil=until
+    }
+}
+""")
     mock_rules = pathlib.Path(stage) / 'GuardRules.swift'
     rules = (ROOT/'GuardRules.swift').read_text()
     start = rules.index('    static func read() -> State {')
@@ -228,6 +234,29 @@ record("D",2100)
 precondition(!journal.restricted("claude.ai",now:now.addingTimeInterval(2100)))
 precondition(awaiting("D",2100))
 record("D",2220);precondition(!awaiting("D",2220))
+// A short diagnostic outage is visible without downgrading a still-verified route.
+let pinned=Monitor()
+pinned.history=ExitHistory(store:UserDefaults(suiteName:UUID().uuidString)!)
+pinned.policyDate={day};pinned.online=true
+let deadline=Int64(Date().timeIntervalSince1970)+120
+pinned.proxy.fixtureLease("1.1.1.1",until:deadline)
+func checkPinned(_ status:String) {
+    fixture(repeated(status));pinned.check();waitUntil{!pinned.running}
+}
+checkPinned("green")
+checkPinned("unknown")
+precondition(pinned.finding("claude.ai") == .domainUnavailable)
+precondition(pinned.displayedFinding("claude.ai") == .rechecking)
+precondition(pinned.displayed(Monitor.hosts) == .clear)
+precondition(pinned.explanation(for:Monitor.hosts) == Finding.rechecking.explanation)
+precondition(pinned.proxy.allowedUntil == deadline)
+precondition(pinned.displayed(Monitor.hosts,now:Date(timeIntervalSince1970:Double(deadline))) == .caution)
+checkPinned("amber");checkPinned("unknown")
+precondition(pinned.displayed(Monitor.hosts) == .caution)
+checkPinned("green");checkPinned("red")
+precondition(pinned.displayed(Monitor.hosts) == .avoid)
+pinned.online=false
+precondition(pinned.displayed(Monitor.hosts) == .caution)
 let dummy=Data("fixture-secret".utf8)
 try! ProxyVault.save(dummy)
 m.proxy.expected="192.0.2.1"

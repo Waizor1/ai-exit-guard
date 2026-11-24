@@ -143,6 +143,8 @@ m.proxy.shutdown()
         assert cycle('green')=='OPEN'
         conn,status=connect();assert status==200
         assert cycle('stale-soon')=='OPEN'
+        assert cycle('partial')=='OPEN'
+        conn.sendall(b'during-recheck\n');assert conn.recv(128)==b'received\n'
         time.sleep(3.2)
         denied()
         assert conn.recv(32)==b''

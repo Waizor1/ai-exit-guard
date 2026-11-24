@@ -59,29 +59,36 @@ enum Recommendation: Int, CaseIterable {
 
 // Higher-priority evidence supplies the single explanation shown in the panel.
 enum Finding: Int {
-    case clear, reputationOnly, waiting, incomplete, changingIP, regionUncertain, policyExpired,
+    case clear, rechecking, reputationOnly, waiting, incomplete, changingIP, regionUncertain, policyExpired,
          trustUnavailable, infoUnavailable, riskUnavailable, regionUnknown, regionConflict, domainUnavailable, moderateIP, moderateAI,
          frequentSwitch, riskyIP, riskyAI, unsupportedCountry, differentExit
 
     var verdict: Recommendation {
         switch self {
-        case .clear: return .clear
+        case .clear, .rechecking: return .clear
         case .frequentSwitch, .riskyIP, .riskyAI, .unsupportedCountry, .differentExit: return .avoid
         default: return .caution
+        }
+    }
+    var missingEvidence: Bool {
+        switch self {
+        case .domainUnavailable, .riskUnavailable, .infoUnavailable, .trustUnavailable, .incomplete, .waiting: return true
+        default: return false
         }
     }
     var explanation: String {
         switch self {
         case .clear: return "Можно входить. Страна поддерживается, у адреса хорошая репутация."
+        case .rechecking: return "Можно продолжать работу. Последняя проверка ещё действует, Guard сам проверит соединение снова."
         case .reputationOnly: return "Страна и репутация адреса проверены. IP123 оценил другой выход для ИИ."
         case .waiting: return "Дождитесь окончания проверки."
-        case .incomplete: return "Нет свежего результата. Повторите проверку перед входом."
+        case .incomplete: return "Дождитесь свежей проверки. Guard запустит её автоматически."
         case .changingIP: return "Интернет-адрес изменился. Подождите: Guard сам проверит, стабилен ли он."
         case .regionUncertain: return "В стране есть региональные исключения. Уточните местоположение перед входом."
         case .policyExpired: return "Список доступных стран устарел. Сверьте страну со списком сервиса."
-        case .trustUnavailable: return "IP123 не вернул оценку для ИИ. Повторите проверку перед входом."
+        case .trustUnavailable: return "IP123 пока не ответил. Guard повторит проверку автоматически."
         case .infoUnavailable: return "IPinfo не подтвердил сведения об адресе. Guard повторит проверку."
-        case .riskUnavailable: return "Репутацию адреса проверить не удалось. Повторите проверку перед входом."
+        case .riskUnavailable: return "Ждём оценку адреса. Guard повторит проверку автоматически."
         case .regionConflict: return "Домен и IPinfo указывают разные страны для этого IP. Уточните выход перед входом."
         case .regionUnknown: return "Сервис не подтвердил страну выхода. Повторите проверку перед входом."
         case .domainUnavailable: return "Сервис пока не ответил. Guard повторит проверку автоматически."

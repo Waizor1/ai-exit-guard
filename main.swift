@@ -128,8 +128,16 @@ final class Monitor: NSObject, ObservableObject {
     }
     func route(_ host:String) -> Recommendation {finding(host).verdict}
     private var previous = [String:(Finding,Date)]()
+    // Presentation only. A diagnostic timeout cannot grant or extend a relay lease.
+    private var verifiedExit = [String:(ip:String, expires:Date)]()
     func displayedFinding(_ host:String, now:Date = Date()) -> Finding {
         let current=finding(host)
+        let service=Self.service(host)
+        if current.missingEvidence, online, directProbeAllowed,
+           let last=verifiedExit[host], now < last.expires,
+           last.ip == proxy.expectedIP(service), proxy.isOpen(service,at:now) {
+            return .rechecking
+        }
         guard running, online, directProbeAllowed, let (old,stamp)=previous[host],
               (0..<Self.maxAge).contains(now.timeIntervalSince(stamp)) else {return current}
         if current == .waiting {return old}
@@ -139,6 +147,24 @@ final class Monitor: NSObject, ObservableObject {
         let verdict = Recommendation.summarize(hosts.map {displayedFinding($0,now:now).verdict})
         if verdict == .clear && !proxy.expected.isEmpty && hosts.contains(where:{!proxy.isOpen(Self.service($0),at:now)}) {return .caution}
         return verdict
+    }
+    func explanation(for selectedHosts:[String])->String {
+        if !online {return "Подключитесь к интернету. Проверка начнётся автоматически."}
+        if !directProbeAllowed && !proxy.expected.isEmpty {return "Маршрут прокси не подтверждён. Проверьте подключение в настройках Guard."}
+        if !directProbeAllowed {return "Системный прокси мешает проверить подключение. Отложите вход."}
+
+        if let region=rows[Monitor.googleHost]?.TraceCountry,
+           selectedHosts.contains(Monitor.googleHost),fresh.contains(Monitor.googleHost),finding(Monitor.googleHost) == .unsupportedCountry {
+            return "Google видит "+(Locale(identifier:"ru").localizedString(forRegionCode:region) ?? region)+". Выберите другой прокси для Antigravity."
+        }
+        let worst=selectedHosts.map {displayedFinding($0)}.max { $0.rawValue < $1.rawValue } ?? .waiting
+        if worst == .clear && displayed(selectedHosts) == .caution {
+            return "Guard ждёт подтверждения прокси. Доступ откроется после проверки."
+        }
+        if worst.missingEvidence, !proxy.expected.isEmpty, selectedHosts.contains(where:{!proxy.isOpen(Self.service($0))}) {
+            return "Ждём подтверждения адреса. Guard сам откроет доступ к сервису после успешной проверки."
+        }
+        return worst.explanation
     }
     var overall:Recommendation {Recommendation.summarize(monitoredHosts.map(route))}
     static func label(_ host:String) -> String {
@@ -189,7 +215,7 @@ final class Monitor: NSObject, ObservableObject {
     private let legacy = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/local.aiexitguard.menu.plist")
     func invalidate(_ message:String, closeAll:Bool=true) {
         retryAt=nil
-        if closeAll {proxy.setLease(0)}
+        if closeAll {verifiedExit.removeAll();proxy.setLease(0)}
         generation += 1
         if let p=process,p.isRunning {p.terminate()}
         process=nil;previous.removeAll();fresh.removeAll();received.removeAll();running=false;note=message;changed?()
@@ -236,6 +262,9 @@ final class Monitor: NSObject, ObservableObject {
                                 self.history.observe(r.Host,ip:r.IP,at:stamp)
                             }
                             let reason = self.finding(r.Host)
+                            if reason != .clear && !reason.missingEvidence {
+                                self.verifiedExit.removeValue(forKey:r.Host)
+                            }
                             let highRisk = reason.verdict == .avoid
                             if highRisk {if self.proxy.plan != nil {self.proxy.setServiceLease(Self.service(r.Host),0)} else {self.proxy.setLease(0)}}
                             self.changed?()
@@ -255,6 +284,10 @@ final class Monitor: NSObject, ObservableObject {
                     for host in self.fresh {
                         if self.finding(host).verdict == .clear, let row=self.rows[host] {
                             self.history.approve(host,ip:row.IP,at:Date())
+                            if row.InfoChecked == true, row.IP == self.proxy.expectedIP(Self.service(host)),
+                               let stamp=self.iso.date(from:row.Checked) {
+                                self.verifiedExit[host]=(row.IP,stamp.addingTimeInterval(Self.maxAge))
+                            }
                         }
                     }
                 }
@@ -270,12 +303,7 @@ final class Monitor: NSObject, ObservableObject {
                     if deadline > 0 || self.overall == .avoid { self.proxy.setLease(deadline) }
                 }
                 if self.received.count != self.monitoredHosts.count || p.terminationStatus != 0 {self.note="Часть результатов недоступна"}
-                let missing = self.monitoredHosts.contains { host in
-                    switch self.finding(host) {
-                    case .domainUnavailable, .riskUnavailable, .infoUnavailable, .trustUnavailable, .incomplete: return true
-                    default: return false
-                    }
-                }
+                let missing = self.monitoredHosts.contains { self.finding($0).missingEvidence }
                 if !isRetry && (missing || p.terminationStatus != 0) {
                     self.retryAt=Date().addingTimeInterval(5)
                 }
@@ -524,7 +552,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             }
         }
         item.button?.setAccessibilityLabel(label)
-        item.button?.toolTip=[label,model.running ? "Дождитесь свежего результата перед входом." : model.advice].filter{!$0.isEmpty}.joined(separator:"\n")
+        item.button?.toolTip=[label,model.explanation(for:model.monitoredHosts)].filter{!$0.isEmpty}.joined(separator:"\n")
 
     }
     func position(){
