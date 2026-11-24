@@ -394,13 +394,16 @@ type enrichment struct {
 }
 
 func (c *checker) results() <-chan result {
-	out := make(chan result, 2*len(targets))
+	return c.resultsFor(targets)
+}
+func (c *checker) resultsFor(selected []target) <-chan result {
+	out := make(chan result, 2*len(selected))
 	var wg sync.WaitGroup
 	var cached sync.Map
 	if c.upstream != nil {
 		c.observed = func(r result) { out <- r }
 	}
-	for _, t := range targets {
+	for _, t := range selected {
 		wg.Add(1)
 		go func(t target) {
 			defer wg.Done()

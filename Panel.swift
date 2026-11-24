@@ -2,18 +2,21 @@ import SwiftUI
 
 struct GuardPanel: View {
     @ObservedObject var model: Monitor
-    private let services = ["Claude", "ChatGPT"]
     private func hosts(_ service:String) -> [String] {
-        service == "Claude" ? Array(Monitor.hosts.prefix(2)) : Array(Monitor.hosts.suffix(2))
+        Monitor.serviceHosts(service)
     }
-    private var selectedHosts:[String] {model.selectedService.map(hosts) ?? Monitor.hosts}
+    private var selectedHosts:[String] {model.selectedService.map(hosts) ?? model.monitoredHosts}
     private var verdict:Recommendation {model.displayed(selectedHosts)}
     private var reason:String {
         if !model.online {return "Подключитесь к интернету. Проверка начнётся автоматически."}
         if !model.directProbeAllowed && !model.proxy.expected.isEmpty {return "Маршрут прокси не подтверждён. Проверьте подключение в настройках Guard."}
         if !model.directProbeAllowed {return "Системный прокси мешает проверить подключение. Отложите вход."}
         if !model.proxy.expected.isEmpty && !model.proxy.allowsTraffic() && verdict != .avoid {
-            return "Доступ через Guard закрыт до полной проверки четырёх маршрутов."
+            return "Guard проверяет выходы. Доступ откроется отдельно для каждого сервиса."
+        }
+        if let region=model.rows[Monitor.googleHost]?.TraceCountry,
+           selectedHosts.contains(Monitor.googleHost),model.fresh.contains(Monitor.googleHost),model.finding(Monitor.googleHost) == .unsupportedCountry {
+            return "Google видит "+(Locale(identifier:"ru").localizedString(forRegionCode:region) ?? region)+". Выберите другой прокси для Antigravity."
         }
         let worst=selectedHosts.map {model.displayedFinding($0)}.max { $0.rawValue < $1.rawValue } ?? .waiting
         return worst.explanation
@@ -41,7 +44,7 @@ struct GuardPanel: View {
             } else if model.permissions {
                 Text("Настройки").font(.system(size:24,weight:.bold))
                 Text("Проверяется соединение AI Exit Guard с доменом. При отдельных правилах Happ для приложений выход может отличаться.").font(.callout).foregroundStyle(.secondary)
-                Button("Прокси для Claude и ChatGPT"){model.proxySettings=true}.buttonStyle(.link)
+                Button("Общий прокси"){model.proxySettings=true}.buttonStyle(.link)
                 setting("bell","Уведомления",model.notificationState,model.notificationState=="Разрешены" ? "Тест" : model.notificationState=="Выключены" ? "Настройки" : "Разрешить",model.notifications)
                 setting("power","Запуск при входе",model.loginState,model.loginState=="Выключен" ? "Включить" : "Настройки",model.login)
                 Button("Инструкция"){ NSWorkspace.shared.open(Bundle.main.resourceURL!.appendingPathComponent("Инструкция.txt")) }
@@ -77,14 +80,22 @@ struct GuardPanel: View {
             } else {
                 if model.selectedService==nil { MainProxyCard(monitor:model,proxy:model.proxy); KillSwitchCard(lock:model.killSwitch,proxy:model.proxy) }
                 VStack(alignment:.leading,spacing:9){
-                    Label((model.selectedService ?? "Claude и ChatGPT")+(!model.proxy.expected.isEmpty ? " · через Guard" : ""),systemImage:verdict.symbol)
+                    Label((model.selectedService ?? "Доступ к ИИ")+(!model.proxy.expected.isEmpty ? " · через Guard" : ""),systemImage:verdict.symbol)
                         .font(.subheadline.weight(.semibold)).foregroundStyle(Color(nsColor:verdict.color))
                     Text(verdict.title).font(.system(size:25,weight:.bold))
                     Text(reason).font(.body).fixedSize(horizontal:false,vertical:true)
                 }.padding(16).frame(maxWidth:.infinity,alignment:.leading)
                  .background(Color(nsColor:verdict.color).opacity(0.10),in:RoundedRectangle(cornerRadius:14))
                 if let service=model.selectedService {
+                    ServiceProxyEditor(service:service,proxy:model.proxy).id(service)
                     let routes=hosts(service)
+                    if service=="Antigravity" {
+                        if let code=model.rows[Monitor.googleHost]?.TraceCountry,!code.isEmpty {
+                            LabeledContent("Страна у Google",value:Locale(identifier:"ru").localizedString(forRegionCode:code) ?? code)
+                        }
+                        Button("Открыть Antigravity"){model.proxy.openAntigravity()}.disabled(!model.proxy.isOpen(service))
+                        if !model.proxy.antigravityMessage.isEmpty {Text(model.proxy.antigravityMessage).font(.caption)}
+                    } else {
                     usage("В браузере",routes[0])
                     if service=="Claude" {
                         usage("Claude Code · напрямую",routes[1])
@@ -93,6 +104,7 @@ struct GuardPanel: View {
                         usage("Codex · с ключом OpenAI",routes[1])
                     }
                     Text("Оценка по адресу сервиса. При отдельном прокси или другом провайдере маршрут командной строки может отличаться.").font(.caption).foregroundStyle(.secondary)
+                    }
                     Button("История IP"){model.showHistory=true}.buttonStyle(.link)
                     Button("Технические сведения"){model.technical=true}.buttonStyle(.link)
                 } else {
@@ -100,6 +112,8 @@ struct GuardPanel: View {
                         serviceRow("Claude","sun.max.fill",.orange)
                         Divider()
                         serviceRow("ChatGPT","bubble.left.and.bubble.right.fill",.teal)
+                        Divider()
+                        serviceRow("Antigravity","sparkles",.indigo)
                     }.padding(.horizontal,10)
                 }
                 if !model.proxy.expected.isEmpty && model.guardOnly {
@@ -136,7 +150,7 @@ struct GuardPanel: View {
         return Button{model.selectedService=name;model.technical=false} label:{
             HStack(spacing:9){
                 Image(systemName:symbol).foregroundStyle(tint).frame(width:24)
-                Text(name).font(.body.weight(.semibold));Spacer();status(state)
+                VStack(alignment:.leading,spacing:2){Text(name).font(.body.weight(.semibold));if model.proxy.plan != nil {Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси":"Индивидуальный прокси").font(.caption).foregroundStyle(.secondary)}};Spacer();status(state)
                 Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
             }.padding(.vertical,10).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(name+" · "+state.title)
@@ -167,29 +181,17 @@ struct GuardPanel: View {
 private struct MainProxyCard:View {
     @ObservedObject var monitor:Monitor
     @ObservedObject var proxy:ProxyClient
-    private var matches:Bool {
-        monitor.online && monitor.fresh.count==Monitor.hosts.count &&
-        Monitor.hosts.allSatisfy{monitor.rows[$0]?.IP==proxy.expected}
-    }
     private var state:(String,Color,String) {
         if proxy.busy {return ("Проверяем…",.secondary,"clock")}
         if proxy.expected.isEmpty {return ("Выключен",.secondary,"circle")}
         if !proxy.ready || !monitor.online {return ("Нет соединения",.orange,"exclamationmark.circle.fill")}
-        if monitor.displayed(Monitor.hosts) == .avoid {return ("Доступ закрыт",.red,"lock.fill")}
-        if !proxy.allowsTraffic() {return ("Ждём проверки",.orange,"lock.fill")}
-        if monitor.guardOnly {return ("Через Guard",.green,"checkmark.circle.fill")}
-        if matches {return ("Прокси проверен",.green,"checkmark.circle.fill")}
-        if let host=Monitor.hosts.first(where:{monitor.fresh.contains($0) && monitor.rows[$0]?.IP.isEmpty==false && monitor.rows[$0]?.IP != proxy.expected}) {
-            let service=Monitor.hosts.prefix(2).contains(host) ? "Claude" : "ChatGPT"
-            return (service+" видит другой IP",.red,"exclamationmark.octagon.fill")
-        }
-        return monitor.running ? ("Проверяем…",.secondary,"clock") : ("Нет ответа от сервиса",.orange,"exclamationmark.circle.fill")
+        return ("Подключён",.green,"checkmark.circle.fill")
     }
     var body:some View {
         let status=state
         VStack(alignment:.leading,spacing:9) {
             HStack{
-                Label("Прокси",systemImage:"network").font(.headline)
+                Label("Общий прокси",systemImage:"network").font(.headline)
                 Spacer()
                 Label(status.0,systemImage:status.2).font(.caption.weight(.semibold)).foregroundStyle(status.1)
             }
@@ -218,5 +220,45 @@ private struct MainProxyCard:View {
                 }
             }
         }.padding(12).background(.quaternary.opacity(0.45),in:RoundedRectangle(cornerRadius:11))
+    }
+}
+
+private final class ServiceProxyForm:ObservableObject {
+    @Published var editing=false
+    @Published var line=""
+    @Published var scheme="socks5"
+}
+private struct ServiceProxyEditor:View {
+    let service:String
+    @ObservedObject var proxy:ProxyClient
+    @StateObject private var form=ServiceProxyForm()
+    var body:some View {
+        VStack(alignment:.leading,spacing:8){
+            if proxy.plan == nil {Text("Подключите общий прокси на главном экране.").font(.callout)}
+            else {
+                Picker("Маршрут",selection:Binding(get:{form.editing || proxy.plan?.Profiles[service] != nil},set:{individual in
+                    if individual {form.editing=true}
+                    else {form.editing=false;form.line="";if proxy.plan?.Profiles[service] != nil {proxy.useCommon(service)}}
+                })){
+                    Text("Общий").tag(false);Text("Индивидуальный").tag(true)
+                }.pickerStyle(.segmented).disabled(proxy.busy)
+                if form.editing {
+                    Picker("Протокол",selection:$form.scheme){Text("SOCKS5").tag("socks5");Text("HTTP").tag("http");Text("HTTPS").tag("https")}
+                    SecureField("логин:пароль@адрес:порт",text:$form.line).textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button("Вставить"){form.line=NSPasteboard.general.string(forType:.string) ?? ""}
+                        Spacer()
+                        Button("Проверить и применить"){proxy.useIndividual(service,line:form.line,scheme:form.scheme)}.disabled(form.line.isEmpty || proxy.busy)
+                    }
+                } else {
+                    HStack{Text("IP выхода");Spacer();Text(proxy.expectedIP(service)).monospacedDigit()
+                        if proxy.plan?.Profiles[service] != nil {Button("Изменить"){form.editing=true}}
+                    }.font(.callout)
+                }
+                if !proxy.profileMessage.isEmpty {Text(proxy.profileMessage).font(.caption).foregroundStyle(.secondary)}
+            }
+        }.onAppear{proxy.profileMessage=""}.onReceive(proxy.$profileMessage){note in
+            if note=="Маршрут сохранён." {form.editing=false;form.line=""}
+        }
     }
 }

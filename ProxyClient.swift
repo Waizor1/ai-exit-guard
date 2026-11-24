@@ -31,6 +31,20 @@ struct ProxyIssue:LocalizedError {
     var errorDescription:String? {message}
 }
 
+struct IndividualProxy: Codable {
+    let Endpoint: ProxyEndpoint
+    let Expected: String
+}
+struct ProxyPlan: Codable {
+    let Common: ProxyEndpoint
+    var Profiles: [String:IndividualProxy]
+    static func load(_ data:Data)throws -> ProxyPlan {
+        let decoder=JSONDecoder()
+        if let legacy=try? decoder.decode(ProxyEndpoint.self,from:data) {return ProxyPlan(Common:legacy,Profiles:[:])}
+        return try decoder.decode(ProxyPlan.self,from:data)
+    }
+}
+
 enum SystemRoute {
     static let pac="http://127.0.0.1:39178/guard.pac"
     static func owns(_ d:[String:Any])->Bool {
@@ -101,6 +115,16 @@ enum ProxyVault {
 }
 
 final class ProxyClient:ObservableObject {
+    static let services=["Claude","ChatGPT","Antigravity"]
+    @Published private(set) var plan:ProxyPlan?
+    @Published private(set) var leases=[String:Int64]()
+    @Published var profileMessage=""
+    var profileChanged:((String)->Void)?
+    func expectedIP(_ service:String)->String {plan?.Profiles[service]?.Expected ?? expected}
+    func isOpen(_ service:String,at now:Date=Date())->Bool {
+        guard plan != nil else{return allowsTraffic(at:now)}
+        return ready && Double(leases[service] ?? 0)>now.timeIntervalSince1970
+    }
     @Published var draft=""
     @Published var scheme="socks5"
     @Published var busy=false
@@ -137,6 +161,11 @@ final class ProxyClient:ObservableObject {
 
     // Wait for the relay to close its live sockets before publishing a red verdict.
     func setLease(_ deadline: Int64) {
+        if plan != nil {
+            guard deadline==0 else{return}
+            if leases.values.contains(where:{$0 != 0}) { _ = command("0", expect:"CLOSED") }
+            leases.removeAll();allowedUntil=0;return
+        }
         guard deadline != allowedUntil, let server, let lifetime, let response else { return }
         do {
             try lifetime.fileHandleForWriting.write(contentsOf: Data("\(deadline)\n".utf8))
@@ -155,6 +184,60 @@ final class ProxyClient:ObservableObject {
         }
     }
 
+    private func command(_ line:String,expect:String)->Bool {
+        guard let lifetime,let response,let server,server.isRunning else{return false}
+        do {
+            try lifetime.fileHandleForWriting.write(contentsOf:Data((line+"\n").utf8))
+            var fd=pollfd(fd:response.fileDescriptor,events:Int16(POLLIN),revents:0)
+            guard poll(&fd,1,1500)>0,String(data:response.availableData,encoding:.utf8)==expect+"\n" else{throw ProxyIssue("Прокси не подтвердил маршрут.")}
+            return true
+        } catch {
+            if server.isRunning {Darwin.kill(server.processIdentifier,SIGKILL);server.waitUntilExit()}
+            ready=false;leases.removeAll();allowedUntil=0;message="Guard остановил прокси после ошибки маршрутизации.";return false
+        }
+    }
+    func setServiceLease(_ service:String,_ deadline:Int64){
+        guard (leases[service] ?? 0) != deadline else{return}
+        if command(service+" "+String(deadline),expect:deadline>0 ? "OPEN":"CLOSED"){
+            leases[service]=deadline;allowedUntil=leases.values.max() ?? 0
+        }
+    }
+    func useCommon(_ service:String){
+        guard !busy,var next=plan else{return}
+        next.Profiles.removeValue(forKey:service);apply(next,service:service)
+    }
+    func useIndividual(_ service:String,line:String,scheme:String){
+        guard !busy,let current=plan,Self.services.contains(service) else{return}
+        do{
+            let ep=try ProxyEndpoint(line,scheme:scheme)
+            var request=try JSONSerialization.jsonObject(with:JSONEncoder().encode(ep)) as! [String:Any]
+            request["CheckService"]=service
+            let (proc,_,output)=try start("proxy-check",JSONSerialization.data(withJSONObject:request))
+            busy=true;profileMessage="Проверяем адрес для "+service+"…"
+            DispatchQueue.global(qos:.utility).async {
+                let answer=String(data:output.fileHandleForReading.readDataToEndOfFile(),encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
+                proc.waitUntilExit()
+                DispatchQueue.main.async {
+                    self.busy=false
+                    guard self.ready,proc.terminationStatus==0,!answer.isEmpty else{self.profileMessage=answer.isEmpty ? "Не удалось проверить прокси.":answer;return}
+                    var next=current;next.Profiles[service]=IndividualProxy(Endpoint:ep,Expected:answer)
+                    self.apply(next,service:service)
+                }
+            }
+        }catch{profileMessage=error.localizedDescription}
+    }
+    private func apply(_ next:ProxyPlan,service:String){
+        do{
+            guard ready else{throw ProxyIssue("Подключите общий прокси.")}
+            let data=try JSONEncoder().encode(next)
+            setServiceLease(service,0)
+            try ProxyVault.save(data)
+            guard command("config "+String(decoding:data,as:UTF8.self),expect:"READY") else{throw ProxyIssue("Настройки сохранены. Перезапустите Guard.")}
+            assessmentSpec=data;plan=next;profileMessage="Маршрут сохранён.";profileChanged?(service)
+        }catch{profileMessage=error.localizedDescription}
+    }
+    @Published private(set) var antigravityMessage = ""
+    private var launchedAntigravity: NSRunningApplication?
     private var server:Process?
     private var lifetime:Pipe?
     private var activityFolder:URL?
@@ -176,6 +259,7 @@ final class ProxyClient:ObservableObject {
         return (p,input,output)
     }
     func relay(_ data:Data)throws {
+        plan=try? JSONDecoder().decode(ProxyPlan.self,from:data); leases.removeAll()
         clearActivityFolder()
         let dir=URL(fileURLWithPath:"/private/tmp",isDirectory:true).appendingPathComponent("aeg-"+UUID().uuidString)
         if (try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])) != nil {activityFolder=dir}
@@ -186,13 +270,13 @@ final class ProxyClient:ObservableObject {
         lifetime=input;response=output.fileHandleForReading;assessmentSpec=data;allowedUntil=0;server=p;started=true
         p.terminationHandler={ [weak self] proc in DispatchQueue.main.async {
             guard let self=self,self.server===proc else{return}
-            self.allowedUntil=0;self.assessmentSpec=nil;self.clearActivityFolder();self.ready=false;self.message="Прокси остановлен. Переподключите его.";self.routeChanged?()
+            self.allowedUntil=0;self.leases.removeAll();self.assessmentSpec=nil;self.clearActivityFolder();self.ready=false;self.message="Прокси остановлен. Переподключите его.";self.routeChanged?()
         }}
     }
     private func stop(){setLease(0);allowedUntil=0;assessmentSpec=nil;response=nil;overlayRequested=false;overlayStarting=false;overlayStarted=false;let p=server;server=nil;try? lifetime?.fileHandleForWriting.close();lifetime=nil;if let p,p.isRunning {p.terminate()};clearActivityFolder();ready=false}
     func restore(){
         guard !expected.isEmpty else{return}
-        do {guard let data=ProxyVault.read() else{throw ProxyIssue("Откройте связку ключей и переподключите прокси.")};try relay(data);ready=true
+        do {guard let data=ProxyVault.read() else{throw ProxyIssue("Откройте связку ключей и переподключите прокси.")};try relay(JSONEncoder().encode(ProxyPlan.load(data)));ready=true
             if UserDefaults.standard.bool(forKey:"restoreGuardPAC") {
                 try SystemRoute.change(enable:true)
                 UserDefaults.standard.removeObject(forKey:"restoreGuardPAC")
@@ -213,7 +297,7 @@ final class ProxyClient:ObservableObject {
                     defer{self.busy=false}
                     guard p.terminationStatus==0,!result.isEmpty else {self.message=result.isEmpty ? "Проверка не завершилась.":result;return}
                     do {
-                        try self.relay(data);try ProxyVault.save(data)
+                        let saved=try JSONEncoder().encode(ProxyPlan.load(data));try self.relay(saved);try ProxyVault.save(saved)
                         try SystemRoute.change(enable:true)
                         self.expected=result;UserDefaults.standard.set(result,forKey:"proxyExpected")
                         self.draft="";self.ready=true;self.message="Прокси подключён.";self.routeChanged?()
@@ -223,7 +307,8 @@ final class ProxyClient:ObservableObject {
         } catch {message=error.localizedDescription}
     }
     func disconnect(){
-        do {try SystemRoute.change(enable:false);stop();ProxyVault.clear();UserDefaults.standard.removeObject(forKey:"restoreGuardPAC");expected="";UserDefaults.standard.removeObject(forKey:"proxyExpected");message="Прокси отключён.";routeChanged?()}
+        guard !busy else{return}
+        do {try SystemRoute.change(enable:false);stop();plan=nil;ProxyVault.clear();UserDefaults.standard.removeObject(forKey:"restoreGuardPAC");expected="";UserDefaults.standard.removeObject(forKey:"proxyExpected");message="Прокси отключён.";routeChanged?()}
         catch {message=error.localizedDescription}
     }
     func prepareForQuit() -> Bool {
@@ -277,6 +362,33 @@ struct ProxyEditor: View {
 }
 
 extension ProxyClient {
+    func openAntigravity() {
+        guard isOpen("Antigravity") else {antigravityMessage="Дождитесь проверки прокси."; return}
+        let id = "com.google.antigravity"
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier:id) else {
+            antigravityMessage="Antigravity не найден в Программах."; return
+        }
+        if let running = NSRunningApplication.runningApplications(withBundleIdentifier:id).first {
+            if running == launchedAntigravity {
+                running.activate(options: [.activateAllWindows])
+                antigravityMessage=""
+            } else {antigravityMessage="Завершите Antigravity через ⌘Q и откройте его здесь ещё раз."}
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        let relay = "http://127.0.0.1:39178"
+        configuration.arguments = ["--proxy-server=" + relay, "--disable-quic"]
+        configuration.environment = ["HTTPS_PROXY":relay, "https_proxy":relay,
+                                     "HTTP_PROXY":relay, "http_proxy":relay,
+                                     "NO_PROXY":"localhost,127.0.0.1,::1", "no_proxy":"localhost,127.0.0.1,::1"]
+        NSWorkspace.shared.openApplication(at:app, configuration:configuration) { opened, error in
+            DispatchQueue.main.async {
+                self.launchedAntigravity = opened
+                self.antigravityMessage = error == nil ? "" : "Не удалось открыть Antigravity."
+            }
+        }
+    }
+
     func openService(_ service:String) {
         guard ready else {message="Подключите прокси перед открытием.";return}
         let browsers=[("com.google.Chrome","Google Chrome"),("com.microsoft.edgemac","Microsoft Edge")]

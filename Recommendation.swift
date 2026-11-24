@@ -102,6 +102,8 @@ enum RegionPolicy {
     private static let openAI = Set("AD AE AF AG AL AM AO AR AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BR BS BT BW BZ CA CD CF CG CH CI CL CM CO CR CV CY CZ DE DJ DK DM DO DZ EC EE EG ER ES ET FI FJ FM FO FR GA GB GD GE GF GH GL GM GN GP GQ GR GT GW GY HN HR HT HU ID IE IL IN IQ IS IT JM JO JP KE KG KH KI KM KN KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MQ MR MT MU MV MW MX MY MZ NA NC NE NG NI NL NO NP NR NZ OM PA PE PF PG PH PK PL PM PS PT PW PY QA RE RO RS RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SZ TD TF TG TH TJ TL TM TN TO TR TT TV TW TZ UA UG US UY UZ VA VC VN VU WF WS YE YT ZA ZM ZW".split(separator:" ").map(String.init))
     // Anthropic explicitly includes territories and dependencies of listed countries.
     private static let dependencies = Set("AI AS AW AX BL BM BQ BV CC CK CW CX FK FO GF GG GI GL GP GS GU HM IM IO JE KY MF MP MQ MS NC NF NU PF PM PN PR RE SH SJ SX TC TF TK UM VG VI WF YT".split(separator:" ").map(String.init))
+    // Google Antigravity geographical availability, reviewed 2026-11-24.
+    private static let google = Set("AS AI AG AR AW BS BB BZ BM BO BR VG CA BQ KY CL CO CR CW DM DO EC SV FK GL GD GT GY HT HN JM MX MS NI PA PY PE PR BL KN LC PM VC GS SR TT TC US UY VI VE AL AM AT AZ BE BA BG HR CY CZ DK EE FO FI FR GE DE GI GR GG HU IS IE IM IT JE XK LV LI LT LU MT ME NL MK NO PL PT RO RS SK SI ES SE CH UA GB DZ AO BJ BW BF BI CV CM CF TD KM CI CD DJ EG GQ ER SZ ET GA GM GH GN GW KE LS LR LY MG MW ML MR MU MA MZ NA NE NG CG RW SH ST SN SC SL SO ZA SS SD TZ TG TN UG EH ZM ZW BH BD BT IO BN KH CX CC IN ID IQ IL JP JO KZ KW KG LA LB MY MV MN NP OM PK PS PH QA SA SG KR LK TW TJ TH TL TR TM AE UZ VN YE AQ AU CK FJ GU HM KI MH FM NR NC NZ NU NF MP PW PG PN WS SB TK TO TV UM VU WF".split(separator:" ").map(String.init))
     private static let known = Set(Locale.Region.isoRegions.map(\.identifier))
     static func isKnown(_ code:String) -> Bool {known.contains(code) && code != "ZZ"}
     static let reviewed = Date(timeIntervalSince1970: 1795305600) // 2026-11-22 UTC
@@ -109,6 +111,7 @@ enum RegionPolicy {
         guard let country, isKnown(country) else {return .regionUnknown}
         guard (0..<90*86400).contains(now.timeIntervalSince(reviewed)) else {return .policyExpired}
         if country == "UA" {return .regionUncertain}
+        if host == "accounts.google.com" {return google.contains(country) ? nil : .unsupportedCountry}
         if host == "claude.ai" || host == "api.anthropic.com" {
             return claude.contains(country) || dependencies.contains(country) ? nil : .unsupportedCountry
         }

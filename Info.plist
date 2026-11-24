@@ -6,8 +6,8 @@
 <key>CFBundleName</key><string>AI Exit Guard</string>
 <key>CFBundleExecutable</key><string>AIExitGuard</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>18</string>
-<key>CFBundleShortVersionString</key><string>1.11.0</string>
+<key>CFBundleVersion</key><string>21</string>
+<key>CFBundleShortVersionString</key><string>1.13.0</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 </dict></plist>

@@ -106,3 +106,20 @@ func TestProxyDoesNotFallBack(t *testing.T) {
 		}
 	}
 }
+
+func TestAntigravityRouting(t *testing.T) {
+	system := "daily-cloudcode-pa.googleapis.com"
+	if !aiHost(system) || !strings.Contains(pac(), system) {
+		t.Fatal("Antigravity backend must route via PAC; shared sign-in requires explicit proxy")
+	}
+	for _, host := range []string{"oauth2.googleapis.com", "www.googleapis.com", "play.googleapis.com"} {
+		if !aiHost(host) || strings.Contains(pac(), host) {
+			t.Fatalf("shared Google sign-in host %s must be accepted only by explicitly proxied clients", host)
+		}
+	}
+	for _, host := range []string{"www.googleapis.com.example.org", "sub.www.googleapis.com", "accounts.google.com.example.org", "x.oauth2.googleapis.com", "drive.google.com", "mail.google.com", "unknown.googleapis.com", "example.run.app"} {
+		if aiHost(host) {
+			t.Fatal("unexpected Google route", host)
+		}
+	}
+}

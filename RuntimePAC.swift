@@ -42,7 +42,7 @@ enum RuntimePAC {
         owned() { printf '%s\n' "$d" | /usr/bin/awk -v p="$pac" -v t="$token" '$1=="ProxyAutoConfigURLString" && $3==p {u=1} $1=="AIExitGuardOwner" && $3==t {m=1} END{exit !(u && m)}'; }
         token="$3"
         scoped="State:/Network/Service/local.aiexitguard.$token/Proxies"
-        domains="claude.ai claude.com anthropic.com claudeusercontent.com claudemcpcontent.com openai.com chatgpt.com oaistatic.com oaiusercontent.com oaistatsig.com openaimerge.com"
+        domains="claude.ai claude.com anthropic.com claudeusercontent.com claudemcpcontent.com openai.com chatgpt.com oaistatic.com oaiusercontent.com oaistatsig.com openaimerge.com antigravity.google antigravity.google.com aicode.googleapis.com cloudcode-pa.googleapis.com daily-cloudcode-pa.googleapis.com jetski-webchannel.googleapis.com businessaicode.googleapis.com businessaicode.us.rep.googleapis.com businessaicode.eu.rep.googleapis.com businessaicode.mtls.googleapis.com antigravity-hub-auto-updater-974169037036.us-central1.run.app antigravity-ide-auto-updater-974169037036.us-central1.run.app"
         scopeLive=''
         scope_on() {
           [ -z "$scopeLive" ] || return 0

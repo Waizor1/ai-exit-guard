@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,7 +25,33 @@ var errProxyAuth = errors.New("Прокси отклонил логин или �
 
 var localProxy = "127.0.0.1:39178"
 
-var aiDomains = []string{"claude.ai", "claude.com", "anthropic.com", "claudeusercontent.com", "claudemcpcontent.com", "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "openaimerge.com"}
+var claudeDomains = []string{"claude.ai", "claude.com", "anthropic.com", "claudeusercontent.com", "claudemcpcontent.com"}
+var openAIDomains = []string{"openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "openaimerge.com"}
+var aiDomains = slices.Concat(claudeDomains, openAIDomains, []string{
+	"antigravity.google",
+	"antigravity.google.com",
+	"aicode.googleapis.com",
+	"cloudcode-pa.googleapis.com",
+	"daily-cloudcode-pa.googleapis.com",
+	"jetski-webchannel.googleapis.com",
+	"businessaicode.googleapis.com",
+	"businessaicode.us.rep.googleapis.com",
+	"businessaicode.eu.rep.googleapis.com",
+	"businessaicode.mtls.googleapis.com",
+	"antigravity-hub-auto-updater-974169037036.us-central1.run.app",
+	"antigravity-ide-auto-updater-974169037036.us-central1.run.app",
+})
+
+// Shared Google services are accepted when a client explicitly uses Guard.
+// The system PAC and Happ must leave these destinations on their existing route.
+var explicitGoogleHosts = []string{
+	"accounts.google.com", "oauth2.googleapis.com", "www.googleapis.com", "play.googleapis.com", "auth.cloud.google",
+	"identitytoolkit.googleapis.com", "securetoken.googleapis.com", "sts.googleapis.com",
+	"generativelanguage.googleapis.com", "aiplatform.googleapis.com",
+	"aiplatform.us.rep.googleapis.com", "aiplatform.eu.rep.googleapis.com", "aiplatform.mtls.googleapis.com",
+	"discoveryengine.googleapis.com", "us-discoveryengine.googleapis.com", "eu-discoveryengine.googleapis.com",
+	"discoveryengine.mtls.googleapis.com", "us-discoveryengine.mtls.googleapis.com", "eu-discoveryengine.mtls.googleapis.com",
+}
 
 type proxySpec struct {
 	gate                         *relayGate
@@ -39,6 +66,9 @@ func (s proxySpec) valid() bool {
 }
 func aiHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if slices.Contains(explicitGoogleHosts, host) {
+		return true
+	}
 	for _, domain := range aiDomains {
 		if host == domain || strings.HasSuffix(host, "."+domain) {
 			return true
@@ -211,15 +241,18 @@ func (s proxySpec) probeClient() *http.Client {
 }
 
 func verifyProxy(ctx context.Context, s proxySpec) (string, error) {
+	return verifyTargets(ctx, s, targets)
+}
+func verifyTargets(ctx context.Context, s proxySpec, selected []target) (string, error) {
 	c := s.probeClient()
 	defer c.CloseIdleConnections()
 	type observation struct {
 		ip  string
 		err error
 	}
-	exits := make(chan observation, len(targets))
+	exits := make(chan observation, len(selected))
 	var wg sync.WaitGroup
-	for _, t := range targets {
+	for _, t := range selected {
 		wg.Add(1)
 		go func(h string) {
 			defer wg.Done()
@@ -266,7 +299,21 @@ func proxyCommand(ctx context.Context, mode string) int {
 	var s proxySpec
 	input := bufio.NewScanner(os.Stdin)
 	input.Buffer(make([]byte, 8192), 8192)
-	if !input.Scan() || json.Unmarshal(input.Bytes(), &s) != nil || !s.valid() {
+	if !input.Scan() {
+		return 1
+	}
+	var plan proxyPlan
+	if err := json.Unmarshal(input.Bytes(), &plan); err != nil {
+		return 1
+	}
+	modern := plan.Common.Host != ""
+	if modern && !plan.valid() {
+		return 1
+	}
+	if modern && mode == "proxy-monitor" {
+		return monitorPlan(ctx, plan, os.Stdout)
+	}
+	if !modern && (json.Unmarshal(input.Bytes(), &s) != nil || !s.valid()) {
 		fmt.Println("Проверьте формат адреса прокси.")
 		return 1
 	}
@@ -281,9 +328,35 @@ func proxyCommand(ctx context.Context, mode string) int {
 		return diagnostic.emit()
 	}
 	if mode == "proxy-check" {
+		var request struct{ CheckService string }
+		if json.Unmarshal(input.Bytes(), &request) != nil {
+			return 1
+		}
+		selected := targets
+		if request.CheckService != "" {
+			selected = nil
+			for _, t := range targets {
+				if serviceForHost(t.host) == request.CheckService {
+					selected = append(selected, t)
+				}
+			}
+			if request.CheckService != "Antigravity" && len(selected) == 0 {
+				return 1
+			}
+		}
 		var baseline string
 		for i := 0; i < 3; i++ {
-			ip, e := verifyProxy(ctx, s)
+			var ip string
+			var e error
+			if request.CheckService == "Antigravity" {
+				g := checkGoogle(ctx, s)
+				ip = g.IP
+				if ip == "" || g.TraceCountry == "" {
+					e = errors.New("Не удалось проверить маршрут Google.")
+				}
+			} else {
+				ip, e = verifyTargets(ctx, s, selected)
+			}
 			if e != nil {
 				fmt.Println(e)
 				return 1
@@ -308,6 +381,9 @@ func proxyCommand(ctx context.Context, mode string) int {
 		if err == nil {
 			defer listener.Close()
 		}
+	}
+	if modern {
+		return servePlan(ctx, plan, input, ln, s.flows)
 	}
 	s.gate = &relayGate{}
 	defer s.gate.set(time.Time{})

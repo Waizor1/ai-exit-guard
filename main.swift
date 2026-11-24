@@ -18,6 +18,7 @@ struct Reading: Decodable, Equatable {
         return risk
     }
     func finding(now:Date) -> Finding {
+        if Host=="accounts.google.com", RegionPolicy.issue(host:Host,country:TraceCountry,now:now) == .unsupportedCountry {return .unsupportedCountry}
         guard !IP.isEmpty else {return .domainUnavailable}
         let region = RegionPolicy.issue(host:Host, country:TraceCountry, now:now)
         if region == .unsupportedCountry {return .unsupportedCountry}
@@ -31,6 +32,7 @@ struct Reading: Decodable, Equatable {
         guard ipRisk != nil else {return .riskUnavailable}
         if RegionPolicy.isKnown(Country), Country != TraceCountry {return .regionConflict}
         if InfoChecked != true {return InfoDetail.isEmpty ? .waiting : .infoUnavailable}
+        if Host=="accounts.google.com" && Status=="google" {return .clear}
         if trust != nil {return .clear}
         if Status == "split", !AssessmentIP.isEmpty, AssessmentIP != IP {return .reputationOnly}
         return .trustUnavailable
@@ -59,6 +61,16 @@ final class Monitor: NSObject, ObservableObject {
     var policyDate: () -> Date = Date.init
     var changed: (() -> Void)?
     static let hosts = ["claude.ai", "api.anthropic.com", "chatgpt.com", "api.openai.com"]
+    static let googleHost="accounts.google.com"
+    static func service(_ host:String)->String {
+        if host==googleHost {return "Antigravity"}
+        return hosts.prefix(2).contains(host) ? "Claude":"ChatGPT"
+    }
+    static func serviceHosts(_ service:String)->[String] {
+        if service=="Antigravity" {return [googleHost]}
+        return hosts.filter{Self.service($0)==service}
+    }
+    var monitoredHosts:[String] {proxy.plan == nil ? Self.hosts : Self.hosts+[Self.googleHost]}
     static let refreshInterval: TimeInterval = 120
     static let maxAge: TimeInterval = 180
     private let iso = ISO8601DateFormatter()
@@ -98,7 +110,7 @@ final class Monitor: NSObject, ObservableObject {
     func finding(_ host:String) -> Finding {
         guard online && directProbeAllowed else {return .incomplete}
         guard fresh.contains(host), let row=rows[host] else {return running ? .waiting : .incomplete}
-        if !proxy.expected.isEmpty, !row.IP.isEmpty, row.IP != proxy.expected {return .differentExit}
+        if !proxy.expected.isEmpty, !row.IP.isEmpty, row.IP != proxy.expectedIP(Self.service(host)) {return .differentExit}
         let result=row.finding(now:policyDate())
         if running && !received.contains(host) && result.verdict != .avoid {return .waiting}
         let time=Date()
@@ -123,12 +135,13 @@ final class Monitor: NSObject, ObservableObject {
     }
     func displayed(_ hosts:[String], now:Date = Date()) -> Recommendation {
         let verdict = Recommendation.summarize(hosts.map {displayedFinding($0,now:now).verdict})
-        if verdict == .clear && !proxy.expected.isEmpty && !proxy.allowsTraffic(at:now) {return .caution}
+        if verdict == .clear && !proxy.expected.isEmpty && hosts.contains(where:{!proxy.isOpen(Self.service($0),at:now)}) {return .caution}
         return verdict
     }
-    var overall:Recommendation {Recommendation.summarize(Self.hosts.map(route))}
+    var overall:Recommendation {Recommendation.summarize(monitoredHosts.map(route))}
     static func label(_ host:String) -> String {
         switch host {
+        case googleHost: return "Antigravity"
         case "claude.ai": return "Сайт Claude"
         case "api.anthropic.com": return "API Claude"
         case "chatgpt.com": return "Сайт ChatGPT"
@@ -139,7 +152,7 @@ final class Monitor: NSObject, ObservableObject {
         if !online {return "Нет интернета. Проверка продолжится после подключения."}
         if !directProbeAllowed {return "Включён системный прокси. Его маршрут проверить не удалось."}
         if !note.isEmpty && fresh.isEmpty {return note}
-        let findings=Self.hosts.map { ($0, finding($0)) }
+        let findings=monitoredHosts.map { ($0, finding($0)) }
         guard let worst=findings.max(by:{ $0.1.rawValue < $1.1.rawValue }) else {return ""}
         if overall == .clear {
             if !proxy.expected.isEmpty && !proxy.allowsTraffic() {return "Доступ через Guard закрыт. Ждём подтверждения проверки."}
@@ -165,8 +178,8 @@ final class Monitor: NSObject, ObservableObject {
     private var generation = 0
     private var notified = Set<String>()
     private let legacy = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/local.aiexitguard.menu.plist")
-    func invalidate(_ message:String) {
-        proxy.setLease(0)
+    func invalidate(_ message:String, closeAll:Bool=true) {
+        if closeAll {proxy.setLease(0)}
         generation += 1
         if let p=process,p.isRunning {p.terminate()}
         process=nil;previous.removeAll();fresh.removeAll();received.removeAll();running=false;note=message;changed?()
@@ -203,7 +216,7 @@ final class Monitor: NSObject, ObservableObject {
                     if let r=try? JSONDecoder().decode(Reading.self,from:line) {
                         DispatchQueue.main.async { [weak self] in
                             guard let self=self, self.generation==token else{return}
-                            guard Self.hosts.contains(r.Host) else{return}
+                            guard self.monitoredHosts.contains(r.Host) else{return}
                             let firstReading = !self.received.contains(r.Host)
                             self.rows[r.Host]=r;self.received.insert(r.Host)
                             if let date=self.iso.date(from:r.Checked),(0..<Self.maxAge).contains(Date().timeIntervalSince(date)) {self.fresh.insert(r.Host)} else {self.fresh.remove(r.Host)}
@@ -212,7 +225,7 @@ final class Monitor: NSObject, ObservableObject {
                             }
                             let reason = self.finding(r.Host)
                             let highRisk = reason.verdict == .avoid
-                            if highRisk {self.proxy.setLease(0)}
+                            if highRisk {if self.proxy.plan != nil {self.proxy.setServiceLease(Self.service(r.Host),0)} else {self.proxy.setLease(0)}}
                             self.changed?()
                             if self.fresh.contains(r.Host),highRisk,self.notified.insert(r.Host).inserted {
                                 self.notify(Self.label(r.Host)+" · "+reason.explanation)
@@ -234,14 +247,31 @@ final class Monitor: NSObject, ObservableObject {
                     }
                 }
                 // Only a complete, current assessment may reopen access after a red result.
-                if !self.proxy.expected.isEmpty {
+                if self.proxy.plan != nil {
+                    for service in ProxyClient.services {
+                        let group=Self.serviceHosts(service)
+                        let deadline=self.serviceDeadline(group:group,success:p.terminationStatus==0)
+                        if deadline>0 || group.contains(where:{self.finding($0).verdict == .avoid}) {self.proxy.setServiceLease(service,deadline)}
+                    }
+                } else if !self.proxy.expected.isEmpty {
                     let deadline = self.leaseDeadline(success:p.terminationStatus == 0)
                     if deadline > 0 || self.overall == .avoid { self.proxy.setLease(deadline) }
                 }
-                if self.received.count != Self.hosts.count || p.terminationStatus != 0 {self.note="Часть результатов недоступна"}
+                if self.received.count != self.monitoredHosts.count || p.terminationStatus != 0 {self.note="Часть результатов недоступна"}
                 self.changed?()
             }
         }
+    }
+    func serviceDeadline(group:[String],success:Bool)->Int64 {
+        guard success,online,directProbeAllowed else{return 0}
+        let stamps=group.compactMap { h -> Date? in
+            guard fresh.contains(h),received.contains(h),finding(h).verdict == .clear, let r=rows[h],
+                  r.IP==proxy.expectedIP(Self.service(h)),r.InfoChecked==true else{return nil}
+            return iso.date(from:r.Checked)
+        }
+        guard stamps.count==group.count,let first=stamps.min() else{return 0}
+        let end=first.addingTimeInterval(Self.maxAge)
+        return end>Date() ? Int64(end.timeIntervalSince1970) : 0
     }
     func leaseDeadline(success:Bool) -> Int64 {
         guard success, online, directProbeAllowed, !proxy.expected.isEmpty,
@@ -315,6 +345,10 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n:Notification) {
         NSApp.setActivationPolicy(.accessory)
         model.proxy.routeChanged={ [weak self] in self?.recheck() }
+        model.proxy.profileChanged={ [weak self] _ in
+            guard let m=self?.model else{return}
+            m.invalidate("",closeAll:false);m.check()
+        }
         model.proxy.restore()
         panel.title = "AI Exit Guard"
         panel.isFloatingPanel = true
@@ -399,7 +433,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     private var drawnState:Recommendation?
     private var animating=false
     func draw(){
-        let state=model.displayed(Monitor.hosts)
+        let state=model.displayed(model.monitoredHosts)
         let label="AI Exit Guard · "+state.title+(model.running ? " · идёт проверка" : "")
         if let button=item.button {
             if spinner.superview == nil {
@@ -476,7 +510,7 @@ signal(SIGPIPE, SIG_IGN)
 // the working relay. Only the exit status leaves this process.
 if CommandLine.arguments.dropFirst().elementsEqual(["--check-saved-proxy"]) {
     guard let data=ProxyVault.read(),
-          (try? JSONDecoder().decode(ProxyEndpoint.self,from:data)) != nil else {exit(1)}
+          (try? ProxyPlan.load(data)) != nil else {exit(1)}
     exit(0)
 }
 if CommandLine.arguments.dropFirst().elementsEqual(["--check-rule-helper"]) {
