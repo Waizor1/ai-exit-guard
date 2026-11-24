@@ -37,17 +37,22 @@ func (c helloReader) Read(p []byte) (int, error) { return c.reader.Read(p) }
 // the origin. The complete, original TLS stream goes through Guard unchanged.
 func (c helloReader) Write(p []byte) (int, error) { return len(p), nil }
 
-func forwardTLS(client net.Conn, relay string) {
-	defer client.Close()
-	client.SetDeadline(time.Now().Add(8 * time.Second))
+func clientHelloName(client net.Conn, input io.Reader) (string, []byte) {
 	var prefix bytes.Buffer
 	var name string
-	capture := helloReader{client, io.TeeReader(io.LimitReader(client, 65536), &prefix)}
+	capture := helloReader{client, io.TeeReader(io.LimitReader(input, 65536), &prefix)}
 	inspector := tls.Server(capture, &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
 		name = strings.ToLower(strings.TrimSuffix(h.ServerName, "."))
 		return nil, errors.New("finished inspection")
 	}})
 	_ = inspector.Handshake()
+	return name, prefix.Bytes()
+}
+
+func forwardTLS(client net.Conn, relay string) {
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(8 * time.Second))
+	name, prefix := clientHelloName(client, client)
 	if !slices.Contains(mappedHosts, name) {
 		return
 	}
@@ -68,7 +73,7 @@ func forwardTLS(client net.Conn, relay string) {
 		return
 	}
 	headers.N = 1 << 62
-	if _, err = io.Copy(peer, &prefix); err != nil {
+	if _, err = peer.Write(prefix); err != nil {
 		return
 	}
 	peer.SetDeadline(time.Time{})

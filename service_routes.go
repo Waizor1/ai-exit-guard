@@ -73,6 +73,7 @@ type serviceRelay struct {
 	mu       sync.RWMutex
 	routes   map[string]proxySpec
 	activity *liveFlows
+	mcp      *mcpRoutes
 }
 
 func (r *serviceRelay) configure(p proxyPlan) {
@@ -112,6 +113,9 @@ func (r *serviceRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	s, ok := r.routes[serviceForHost(host)]
 	r.mu.RUnlock()
 	if !ok {
+		if r.mcp.serve(w, req) {
+			return
+		}
 		http.Error(w, "Destination outside AI route", 403)
 		return
 	}
@@ -255,7 +259,7 @@ func collectPlan(ctx context.Context, p proxyPlan, emit func(result) error) int 
 }
 
 func servePlan(ctx context.Context, p proxyPlan, input *bufio.Scanner, ln net.Listener, activity *liveFlows) int {
-	r := &serviceRelay{activity: activity}
+	r := &serviceRelay{activity: activity, mcp: loadMCP(ctx)}
 	r.configure(p)
 	defer r.close()
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 32768}
