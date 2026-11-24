@@ -52,7 +52,15 @@ try {
     $entries=@(Get-NetFirewallRule -Group 'AI Exit Guard' -ErrorAction Stop | Where-Object { ($_ | Get-NetFirewallApplicationFilter).Program -eq $protected })
     & $protected --disable --noproxy '*' --silent --head --max-time 5 https://github.com | Out-Null
     if($LASTEXITCODE -eq 0){throw 'Direct client request passed the persistent firewall'}
-    if($entries.Count -ne 3 -or @($entries | Where-Object {$_.Enabled -ne 'True' -or $_.Action -ne 'Block' -or $_.Direction -ne 'Outbound'}).Count){throw 'Incomplete Windows firewall policy'}
+    $local=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,39178)
+    $local.Start()
+    try {
+        $check=Start-Process $protected -ArgumentList '--disable --noproxy "" --proxy http://127.0.0.1:39178 --max-time 4 https://example.org' -WindowStyle Hidden -PassThru
+        $accept=$local.AcceptTcpClientAsync()
+        if(!$accept.Wait(3500)){throw 'Firewall also prevented the client from reaching Guard'}
+        $accept.Result.Close();$check.WaitForExit()
+    }finally{$local.Stop()}
+    if($entries.Count -ne 1 -or @($entries | Where-Object {$_.Enabled -ne 'True' -or $_.Action -ne 'Block' -or $_.Direction -ne 'Outbound'}).Count){throw 'Incomplete Windows firewall policy'}
 } finally {
     $disable=Start-Process $gui -ArgumentList "--client-off $encoded" -Wait -PassThru
     if($disable.ExitCode){throw 'Persistent firewall rollback failed'}

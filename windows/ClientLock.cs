@@ -31,19 +31,18 @@ static class ClientLock {
             if(!File.Exists(path))throw new FileNotFoundException();
             foreach(int profile in new[]{1,2,4})if(!policy.FirewallEnabled[profile])throw new InvalidOperationException("Включите брандмауэр Windows во всех профилях.");
         }
-        var specs=new[]{
-            new {Name="external",Protocol=256,Addresses="0.0.0.0-127.0.0.0,127.0.0.2-255.255.255.255,::/0",Ports=""},
-            new {Name="other TCP",Protocol=6,Addresses="127.0.0.1",Ports="1-39177,39179-65535"},
-            new {Name="local UDP",Protocol=17,Addresses="127.0.0.1",Ports=""}
-        };
-        foreach(var spec in specs) {
-            string name=prefix+" "+spec.Name;dynamic existing=Owned(policy,name,path);
-            if(!enabled){if(existing!=null)rules.Remove(name);continue;}
-            if(existing!=null)continue;
-            dynamic r=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule",true));
-            r.Name=name;r.Grouping=Group;r.ApplicationName=path;r.Protocol=spec.Protocol;
-            r.RemoteAddresses=spec.Addresses;if(spec.Ports!="")r.RemotePorts=spec.Ports;
-            r.Direction=2;r.Action=0;r.Profiles=7;r.Enabled=true;rules.Add(r);
+        string name=prefix+" external";
+        dynamic existing=Owned(policy,name,path);
+        if(!enabled){if(existing!=null)rules.Remove(name);return;}
+        if(existing!=null) {
+            if(!(bool)existing.Enabled || (int)existing.Direction!=2 || (int)existing.Action!=0 || (int)existing.Protocol!=256 || (int)existing.Profiles!=7 || (string)existing.RemoteAddresses!="*")
+                throw new InvalidDataException("Существующее правило брандмауэра было изменено.");
+            return;
         }
+        // Defender treats local loopback separately for ordinary desktop apps.
+        // Block all external addresses; the signed redirector handles local port rules.
+        dynamic r=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule",true));
+        r.Name=name;r.Grouping=Group;r.ApplicationName=path;r.Direction=2;r.Action=0;
+        r.Profiles=7;r.Enabled=true;rules.Add(r);
     }
 }
