@@ -5,8 +5,19 @@ if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable
     $ui=Start-Process (Join-Path $dir 'AI Exit Guard.exe') -PassThru
     try {
         if(!$ui.WaitForInputIdle(15000)){throw 'Windows UI failed to initialize'}
-        $ui.Refresh()
-        if($ui.HasExited -or $ui.MainWindowTitle -ne 'AI Exit Guard'){throw 'Windows UI not visible'}
+        Add-Type -AssemblyName UIAutomationClient
+        $id=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$ui.Id)
+        $title=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'AI Exit Guard')
+        $window=$null
+        $deadline=[DateTime]::UtcNow.AddSeconds(15)
+        while (!$window -and !$ui.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+            $condition=New-Object Windows.Automation.AndCondition($id,$title)
+            $window=[Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children,$condition)
+            if(!$window){Start-Sleep -Milliseconds 200}
+        }
+        if(!$window){throw 'Windows form missing from native accessibility tree'}
+        $edits=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Edit)
+        if($window.FindAll([Windows.Automation.TreeScope]::Descendants,$edits).Count -ne 8){throw 'Missing proxy fields'}
     } finally {if(!$ui.HasExited){$ui.Kill();$ui.WaitForExit()}}
     $profile=Get-Content -Raw (Join-Path $dir 'AI Exit Guard.pbprofile') | ConvertFrom-Json
     if($profile.ProxyConfigs[0].Host -ne '127.0.0.1' -or $profile.ProxyConfigs[0].Port -ne '39178'){throw 'Wrong relay'}
