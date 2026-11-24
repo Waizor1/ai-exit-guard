@@ -17,6 +17,17 @@ for arch in ('arm64', 'x86_64'):
         raise RuntimeError('Client must use hardened runtime')
 requirement = 'identifier "local.aiexitguard.menu" and (' + ' or '.join(
     f'cdhash H"{digest}"' for digest in hashes) + ')'
+if sys.argv[2:] == ['--developer-id']:
+    team = re.search(r'^TeamIdentifier=([A-Z0-9]{10})$', info, re.M)
+    if not team:
+        raise RuntimeError('A Developer ID Application signature is required')
+    # Match Guard from the same Apple developer team across version and certificate renewals.
+    requirement = ('identifier "local.aiexitguard.menu" and anchor apple generic '
+                   'and certificate 1[field.1.2.840.113635.100.6.2.6] exists '
+                   'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
+                   f'and certificate leaf[subject.OU] = "{team[1]}"')
+elif sys.argv[2:]:
+    raise ValueError('Unknown signing mode')
 subprocess.run(['/usr/bin/codesign', '--verify', '--all-architectures', '-R', '=' + requirement, app], check=True)
 plist = root / f'Library/LaunchDaemons/{service}.plist'
 plist.parent.mkdir(parents=True, exist_ok=True)

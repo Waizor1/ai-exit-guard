@@ -3,13 +3,19 @@ set -eu
 identity=${DEVELOPER_ID_APPLICATION:-}
 profile=${NOTARY_KEYCHAIN_PROFILE:-}
 release=false
+app_update=false
 case "${1:-}" in
  --release) release=true ;;
+ --app-update) app_update=true ;;
  "") ;;
- *) echo "Usage: build.sh [--release]" >&2; exit 2 ;;
+ *) echo "Usage: build.sh [--release | --app-update]" >&2; exit 2 ;;
 esac
 if $release && [[ -z "$identity" || -z "${DEVELOPER_ID_INSTALLER:-}" || -z "$profile" ]]; then
  echo "Public release requires Developer ID Application, Developer ID Installer, and a notarization profile." >&2
+ exit 1
+fi
+if $app_update && [[ -z "$identity" || -z "$profile" ]]; then
+ echo "An app update requires Developer ID Application and a notarization profile." >&2
  exit 1
 fi
 if [[ -n "$profile" && -z "$identity" ]]; then
@@ -53,7 +59,22 @@ codesign "${sign[@]}" "$res/guard"
 codesign "${sign[@]}" "$app"
 codesign --verify --strict --deep "$app"
 install -m 755 "$res/guard" "$stage/root/Library/PrivilegedHelperTools/local.aiexitguard.ingress"
-python3 packaging/helper_package.py "$stage/root"
+if $release || $app_update; then
+ python3 packaging/helper_package.py "$stage/root" --developer-id
+else
+ python3 packaging/helper_package.py "$stage/root"
+fi
+if $app_update; then
+ archive="$stage/AI Exit Guard.zip"
+ ditto -c -k --keepParent "$app" "$archive"
+ xcrun notarytool submit "$archive" --keychain-profile "$profile" --wait
+ xcrun stapler staple "$app"
+ xcrun stapler validate "$app"
+ spctl --assess --type execute "$app"
+ ditto -c -k --keepParent "$app" "$stage/stapled.zip"
+ mv "$stage/stapled.zip" "dist/AI Exit Guard App Update.zip"
+ exit 0
+fi
 pkgbuild --analyze --root "$stage/root" "$stage/components.plist"
 python3 - "$stage/components.plist" <<'PKG'
 import plistlib, pathlib, sys
