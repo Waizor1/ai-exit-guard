@@ -12,7 +12,8 @@ struct Reading: Decodable, Equatable {
     let Country, Network, InfoDetail: String
     let Signals: [String]?
     let TraceCountry: String?
-    let InfoChecked: Bool?
+    let InfoChecked, InfoUnavailable: Bool?
+    var infoFinished:Bool {InfoChecked == true || InfoUnavailable == true}
     var ipRisk: Double? {
         guard !IP.isEmpty, let risk=Risk, (0...100).contains(risk) else {return nil}
         return risk
@@ -31,7 +32,7 @@ struct Reading: Decodable, Equatable {
         if let region {return region}
         guard ipRisk != nil else {return .riskUnavailable}
         if RegionPolicy.isKnown(Country), Country != TraceCountry {return .regionConflict}
-        if InfoChecked != true {return InfoDetail.isEmpty ? .waiting : .infoUnavailable}
+        if !infoFinished {return InfoDetail.isEmpty ? .waiting : .infoUnavailable}
         if Host=="accounts.google.com" && Status=="google" {return .clear}
         if trust != nil {return .clear}
         if Status == "split", !AssessmentIP.isEmpty, AssessmentIP != IP {return .reputationOnly}
@@ -77,6 +78,7 @@ final class Monitor: NSObject, ObservableObject {
     private let iso = ISO8601DateFormatter()
     private var lastAttempt = Date.distantPast
     private var retryAt:Date?
+    private var recoveryDelay:TimeInterval=5
     @Published private(set) var received = Set<String>()
     // This helper opens direct connections. A system proxy can give clients another exit.
     static func proxyEnabled(_ settings: [String: Any]) -> Bool {
@@ -213,7 +215,7 @@ final class Monitor: NSObject, ObservableObject {
         // Start earlier for pinned routes to leave room for a timeout and retry.
         let interval = proxy.expected.isEmpty ? Self.refreshInterval : 90
         guard online, !running else {return}
-        if let retryAt, now >= retryAt {startCheck(isRetry:true)}
+        if let retryAt, now >= retryAt {startCheck()}
         else if elapsed>=interval || elapsed<0 {check()}
     }
     private var process: Process?
@@ -227,8 +229,8 @@ final class Monitor: NSObject, ObservableObject {
         if let p=process,p.isRunning {p.terminate()}
         process=nil;previous.removeAll();fresh.removeAll();received.removeAll();running=false;note=message;changed?()
     }
-    func check() {startCheck(isRetry:false)}
-    private func startCheck(isRetry:Bool) {
+    func check() {recoveryDelay=5;startCheck()}
+    private func startCheck() {
         updateProxy()
         guard online, directProbeAllowed, !running else{return}
         retryAt=nil
@@ -277,7 +279,7 @@ final class Monitor: NSObject, ObservableObject {
                             self.changed?()
                             if self.fresh.contains(r.Host),highRisk,self.notified.insert(r.Host).inserted {
                                 self.notify(Self.label(r.Host)+" · "+reason.explanation)
-                            } else if !highRisk && r.InfoChecked == true { self.notified.remove(r.Host) }
+                            } else if !highRisk && r.infoFinished { self.notified.remove(r.Host) }
                         }
                     }
                 }
@@ -291,7 +293,7 @@ final class Monitor: NSObject, ObservableObject {
                     for host in self.fresh {
                         if self.finding(host).verdict == .clear, let row=self.rows[host] {
                             self.history.approve(host,ip:row.IP,at:Date())
-                            if row.InfoChecked == true, row.IP == self.proxy.expectedIP(Self.service(host)),
+                            if row.infoFinished, row.IP == self.proxy.expectedIP(Self.service(host)),
                                let stamp=self.iso.date(from:row.Checked) {
                                 self.verifiedExit[host]=(row.IP,stamp.addingTimeInterval(Self.maxAge))
                             }
@@ -311,9 +313,10 @@ final class Monitor: NSObject, ObservableObject {
                 }
                 if self.received.count != self.monitoredHosts.count || p.terminationStatus != 0 {self.note="Часть результатов недоступна"}
                 let missing = self.monitoredHosts.contains { self.finding($0).missingEvidence }
-                if !isRetry && (missing || p.terminationStatus != 0) {
-                    self.retryAt=Date().addingTimeInterval(5)
-                }
+                if missing || p.terminationStatus != 0 {
+                    self.retryAt=Date().addingTimeInterval(self.recoveryDelay)
+                    self.recoveryDelay=min(30,self.recoveryDelay*2)
+                } else {self.recoveryDelay=5}
                 self.changed?()
             }
         }
@@ -322,7 +325,7 @@ final class Monitor: NSObject, ObservableObject {
         guard success,online,directProbeAllowed else{return 0}
         let stamps=group.compactMap { h -> Date? in
             guard fresh.contains(h),received.contains(h),finding(h).verdict == .clear, let r=rows[h],
-                  r.IP==proxy.expectedIP(Self.service(h)),r.InfoChecked==true else{return nil}
+                  r.IP==proxy.expectedIP(Self.service(h)),r.infoFinished else{return nil}
             return iso.date(from:r.Checked)
         }
         guard stamps.count==group.count,let first=stamps.min() else{return 0}
@@ -333,7 +336,7 @@ final class Monitor: NSObject, ObservableObject {
         guard success, online, directProbeAllowed, !proxy.expected.isEmpty,
               fresh == Set(Self.hosts), received == fresh, overall == .clear else { return 0 }
         let stamps = Self.hosts.compactMap { host -> Date? in
-            guard let row=rows[host], row.IP == proxy.expected, row.InfoChecked == true else { return nil }
+            guard let row=rows[host], row.IP == proxy.expected, row.infoFinished else { return nil }
             return iso.date(from:row.Checked)
         }
         guard stamps.count==Self.hosts.count, let oldest=stamps.min() else { return 0 }
@@ -428,6 +431,17 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     var pending: DispatchWorkItem?
     var observation: AnyCancellable?
     var connectionObservation: AnyCancellable?
+    private var proxyReadiness:AnyCancellable?
+    private var monitoringActivity:NSObjectProtocol?
+    private func maintainMonitoring(_ ready:Bool) {
+        if ready && monitoringActivity == nil {
+            monitoringActivity=ProcessInfo.processInfo.beginActivity(options:.userInitiatedAllowingIdleSystemSleep,
+                reason:"Проверка активных маршрутов Guard")
+        } else if !ready, let token=monitoringActivity {
+            ProcessInfo.processInfo.endActivity(token)
+            monitoringActivity=nil
+        }
+    }
     var outside: Any?
     var local: Any?
     var anchor = NSRect.zero
@@ -448,6 +462,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             guard let m=self?.model else{return}
             m.invalidate("",closeAll:false);m.check()
         }
+        proxyReadiness=model.proxy.$ready.removeDuplicates().sink { [weak self] ready in self?.maintainMonitoring(ready) }
         model.proxy.restore()
         panel.title = "AI Exit Guard"
         panel.isFloatingPanel = true
@@ -605,6 +620,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         model.proxy.prepareForQuit() ? .terminateNow : .terminateCancel
     }
     func applicationWillTerminate(_ n:Notification){
+        maintainMonitoring(false)
         periodic?.invalidate();pending?.cancel();path.cancel();model.invalidate("");model.proxy.shutdown()
         if let outside=outside{NSEvent.removeMonitor(outside)}
         if let local=local{NSEvent.removeMonitor(local)}

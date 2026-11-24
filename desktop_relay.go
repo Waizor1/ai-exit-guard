@@ -56,10 +56,10 @@ func (c desktopConfig) refusal(r result, countries map[string]string, now time.T
 		return "Нет оценки риска для этого IP."
 	case *r.Risk > 33:
 		return "Риск этого IP выше допустимого."
-	case !r.InfoChecked || r.Country == "" || r.TraceCountry == "":
+	case (!r.InfoChecked && !r.InfoUnavailable) || (r.InfoChecked && r.Country == "") || r.TraceCountry == "":
 		return "Не удалось подтвердить страну выхода."
 	}
-	bothSupported := isProtectedCountry(service, r.Country, countries) && isProtectedCountry(service, r.TraceCountry, countries)
+	bothSupported := (!r.InfoChecked || isProtectedCountry(service, r.Country, countries)) && isProtectedCountry(service, r.TraceCountry, countries)
 	source := "Сервис"
 	if service == "Antigravity" {
 		source = "Google"
@@ -67,7 +67,7 @@ func (c desktopConfig) refusal(r result, countries map[string]string, now time.T
 	switch {
 	case !bothSupported:
 		return fmt.Sprintf("Страна недоступна (%s: %s, IPinfo: %s).", source, r.TraceCountry, r.Country)
-	case r.Country != r.TraceCountry && !(service == "Antigravity" && c.AllowGoogleCountryMismatch):
+	case r.InfoChecked && r.Country != r.TraceCountry && !(service == "Antigravity" && c.AllowGoogleCountryMismatch):
 		return fmt.Sprintf("Страны различаются (%s: %s, IPinfo: %s).", source, r.TraceCountry, r.Country)
 	case service == "Antigravity" && r.Host == googleHost && r.Status == "google":
 		return ""

@@ -36,7 +36,7 @@ type result struct {
 	TraceCountry, Country, Network, InfoDetail                  string
 	Signals                                                     []string
 	Trust, Risk                                                 *float64
-	InfoChecked                                                 bool
+	InfoChecked, InfoUnavailable                                bool
 }
 type trustResult struct {
 	ip     string
@@ -428,9 +428,31 @@ func decodeInfo(b []byte, requested string) (networkInfo, error) {
 }
 
 type enrichment struct {
-	once sync.Once
-	info networkInfo
-	err  error
+	once        sync.Once
+	info        networkInfo
+	err         error
+	unavailable bool
+}
+
+func (e *enrichment) lookup(ctx context.Context, client *http.Client, ip string) {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	body, err := probeBody(ctx, client, "https://ipinfo.io/"+ip+"/json")
+	if err != nil {
+		e.err, e.unavailable = err, true
+		return
+	}
+	e.info, e.err = decodeInfo(body, ip)
+}
+
+func (e *enrichment) apply(r *result) {
+	r.InfoChecked = e.err == nil
+	r.InfoUnavailable = e.unavailable
+	if e.err != nil {
+		r.InfoDetail = describe(e.err)
+		return
+	}
+	r.Country, r.Network, r.Signals = e.info.Country, e.info.Org, e.info.signals()
 }
 
 func (c *checker) results() <-chan result {
@@ -454,21 +476,8 @@ func (c *checker) resultsFor(selected []target) <-chan result {
 			}
 			raw, _ := cached.LoadOrStore(r.IP, &enrichment{})
 			e := raw.(*enrichment)
-			e.once.Do(func() {
-				b, err := probeBody(c.ctx, c.client, "https://ipinfo.io/"+r.IP+"/json")
-				if err == nil {
-					e.info, err = decodeInfo(b, r.IP)
-				}
-				e.err = err
-			})
-			r.InfoChecked = e.err == nil
-			if e.err != nil {
-				r.InfoDetail = describe(e.err)
-			} else {
-				r.Country = e.info.Country
-				r.Network = e.info.Org
-				r.Signals = e.info.signals()
-			}
+			e.once.Do(func() { e.lookup(c.ctx, c.client, r.IP) })
+			e.apply(&r)
 			out <- r
 		}(t)
 	}

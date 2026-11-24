@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +53,44 @@ func TestSystemProfiles(t *testing.T) {
 	}
 }
 
+func TestT3LoopbackRule(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	folder := filepath.Join(home, ".t3", "userdata")
+	if err := os.MkdirAll(folder, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range []string{"http://127.0.0.1:3773", "http://127.0.0.1:39178", "http://127.0.0.1:65536", "https://outside.example:3773", "http://127.0.0.1:3773/path"} {
+		raw, _ := json.Marshal(map[string]string{"origin": origin})
+		if err := os.WriteFile(filepath.Join(folder, "server-runtime.json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		var b bytes.Buffer
+		if err := writeSystemProfile(&b, "darwin"); err != nil {
+			t.Fatal(err)
+		}
+		var profile struct {
+			ProxyRules []struct{ Name, TargetHosts, TargetPorts, Action, Protocol, ProcessNames string }
+		}
+		if err := json.Unmarshal(b.Bytes(), &profile); err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, r := range profile.ProxyRules {
+			if r.Name != "Local T3 MCP" {
+				continue
+			}
+			if r.TargetHosts != "127.0.0.1" || r.TargetPorts != "3773" || r.Action != "DIRECT" || r.Protocol != "TCP" || r.ProcessNames == "*" {
+				t.Fatal(r)
+			}
+			count++
+		}
+		if (origin == "http://127.0.0.1:3773" && count != 5) || (origin != "http://127.0.0.1:3773" && count != 0) {
+			t.Fatal(origin, count)
+		}
+	}
+}
+
 func TestDesktopVerdict(t *testing.T) {
 	var countries map[string]string
 	if err := json.Unmarshal(regionData, &countries); err != nil {
@@ -61,6 +101,16 @@ func TestDesktopVerdict(t *testing.T) {
 	now := time.Unix(1795305600, 0)
 	if (desktopConfig{Expected: r.IP}).refusal(r, countries, now) != "" {
 		t.Fatal("refused a checked route")
+	}
+	offline := r
+	offline.InfoChecked, offline.InfoUnavailable, offline.Country = false, true, ""
+	cfg := desktopConfig{Expected: r.IP}
+	if reason := cfg.refusal(offline, countries, now); reason != "" {
+		t.Fatal("supplemental outage", reason)
+	}
+	offline.TraceCountry = "RU"
+	if cfg.refusal(offline, countries, now) == "" {
+		t.Fatal("unverified region accepted")
 	}
 	for _, c := range []struct {
 		r   result

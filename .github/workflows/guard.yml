@@ -21,9 +21,16 @@ jobs:
         shell: powershell
         run: |
           ./windows/build.ps1
+          $env:GUARD_UI_SCREENSHOTS = "$env:RUNNER_TEMP/guard-ui"
           ./windows/smoke.ps1
           ./windows/filter-smoke.ps1
           Compress-Archive -Path 'dist/windows-x64/*' -DestinationPath 'dist/AI-Exit-Guard-Windows-x64.zip'
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Guard-Windows-screenshots
+          path: ${{ runner.temp }}/guard-ui/*.png
+          if-no-files-found: error
       - if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
@@ -31,6 +38,8 @@ jobs:
           path: dist/AI-Exit-Guard-Windows-x64.zip
       - if: runner.os == 'macOS'
         run: |
+          python3 tests/check_t3_launcher.py
+          python3 tests/check_status.py
           python3 tests/check_kill_switch.py
           python3 tests/check_red_relay.py
           ./build.sh

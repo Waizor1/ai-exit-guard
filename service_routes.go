@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -208,15 +207,9 @@ func checkGoogle(ctx context.Context, ep proxySpec) result {
 	c := checker{ctx: ctx, client: newClient()}
 	defer c.client.CloseIdleConnections()
 	r.Risk = c.general(r.IP).value
-	b, err = probeBody(ctx, c.client, "https://ipinfo.io/"+url.PathEscape(r.IP)+"/json")
-	if err == nil {
-		info, e := decodeInfo(b, r.IP)
-		if e == nil {
-			r.Country = info.Country
-			r.Network = info.Org
-			r.InfoChecked = true
-		}
-	}
+	var info enrichment
+	info.lookup(ctx, c.client, r.IP)
+	info.apply(&r)
 	r.Status = "google"
 	return r
 }

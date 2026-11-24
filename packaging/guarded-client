@@ -15,4 +15,15 @@ esac
 export HTTP_PROXY=http://127.0.0.1:39178 HTTPS_PROXY=http://127.0.0.1:39178
 export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
 unset ALL_PROXY all_proxy NO_PROXY no_proxy
-exec /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote tcp "localhost:39178"))' "$client" "$@"
+policy='(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote tcp "localhost:39178"))'
+# T3's native MCP client opens its own socket. Grant just the current
+# server port, after matching the launcher endpoint to T3's local record.
+origin=$(/usr/bin/plutil -extract origin raw -o - "$HOME/.t3/userdata/server-runtime.json" 2>/dev/null) || origin=''
+if [[ "$origin" =~ '^http://127[.]0[.]0[.]1:([1-9][0-9]{0,4})$' ]]; then
+  port=$match[1]
+  if [[ "${T3_ACP_MCP_ENDPOINT:-}" == "$origin/mcp" ]] && (( port > 1023 && port < 65536 && port != 39178 )); then
+    export NO_PROXY=127.0.0.1 no_proxy=127.0.0.1
+    policy+="(allow network-outbound (remote tcp \"localhost:$port\"))"
+  fi
+fi
+exec /usr/bin/sandbox-exec -p "$policy" "$client" "$@"

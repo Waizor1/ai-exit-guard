@@ -104,6 +104,11 @@ func fixture(_ statuses:[String],age:Double=0){
             rec["IP"]="1.1.1.1";rec["AssessmentIP"]="1.1.1.1"
             rec["Risk"]=2;rec["Trust"]=["green":90,"amber":50,"red":10][status]!
         }
+        if status=="info-timeout" {
+            rec["IP"]="1.1.1.1";rec["AssessmentIP"]="1.1.1.1"
+            rec["Risk"]=2;rec["Trust"]=90;rec["Status"]="green";rec["InfoChecked"]=false
+            rec["InfoUnavailable"]=true;rec["InfoDetail"]="тайм-аут"
+        }
         if status=="confirmed-high-risk" {rec["Status"]="green";rec["Trust"]=95;rec["Risk"]=90;rec["IP"]="1.1.1.1";rec["AssessmentIP"]="1.1.1.1"}
         if status.hasPrefix("split-") {rec["Status"]="split";rec["Risk"]=Int(status.dropFirst(6))!;rec["IP"]="1.1.1.1";rec["AssessmentIP"]="8.8.8.8"}
         if status=="other-exit" {rec["Status"]="green";rec["Risk"]=5;rec["Trust"]=90;rec["IP"]="9.9.9.9";rec["AssessmentIP"]="9.9.9.9"}
@@ -136,12 +141,13 @@ m.policyDate={RegionPolicy.reviewed.addingTimeInterval(86400)}
 m.proxyAllowsProbe={true}
 func repeated(_ status:String)->[String]{Array(repeating:status,count:4)}
 result(repeated("green"),.clear)
-// A missing answer triggers one early round. A second failure returns
-// to the ordinary schedule, and success requires fresh evidence.
+// A missing answer starts bounded backoff until fresh evidence recovers the route.
 result(repeated("unknown"),.caution)
 m.tick(now:Date().addingTimeInterval(7));precondition(m.running)
 waitUntil{!m.running}
-m.tick(now:Date().addingTimeInterval(15));precondition(!m.running)
+m.tick(now:Date().addingTimeInterval(7));precondition(!m.running)
+fixture(repeated("green"));m.tick(now:Date().addingTimeInterval(16))
+precondition(m.running);waitUntil{!m.running};precondition(m.overall == .clear)
 result(repeated("unknown"),.caution)
 fixture(repeated("green"));m.tick(now:Date().addingTimeInterval(7))
 precondition(m.running);waitUntil{!m.running};precondition(m.overall == .clear)
@@ -243,6 +249,9 @@ pinned.proxy.fixtureLease("1.1.1.1",until:deadline)
 func checkPinned(_ status:String) {
     fixture(repeated(status));pinned.check();waitUntil{!pinned.running}
 }
+checkPinned("info-timeout")
+precondition(pinned.leaseDeadline(success:true)>0)
+precondition(pinned.serviceDeadline(group:Monitor.serviceHosts("Claude"),success:true)>0)
 checkPinned("green")
 checkPinned("unknown")
 precondition(pinned.finding("claude.ai") == .domainUnavailable)
