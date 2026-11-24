@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -439,6 +440,16 @@ func (c *checker) resultsFor(selected []target) <-chan result {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) == 2 && os.Args[1] == "system-profile" {
+		if writeSystemProfile(os.Stdout, runtime.GOOS) != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "desktop-relay" {
+		os.Exit(desktopRelay(ctx, os.Stdin, os.Stdout))
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "activity" {
 		if activityCommand(ctx, os.Getenv("AI_GUARD_ACTIVITY_SOCKET")) != nil {
 			os.Exit(1)

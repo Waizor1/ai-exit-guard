@@ -1,0 +1,35 @@
+name: Guard cross-platform checks
+on: [push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./windows/build.ps1
+          ./windows/smoke.ps1
+          Compress-Archive -Path 'dist/windows-x64/*' -DestinationPath 'dist/AI-Exit-Guard-Windows-x64.zip'
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Guard-Windows-x64
+          path: dist/AI-Exit-Guard-Windows-x64.zip
+      - if: runner.os == 'macOS'
+        run: |
+          python3 tests/check_kill_switch.py
+          python3 tests/check_red_relay.py
+          ./build.sh

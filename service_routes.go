@@ -215,6 +215,11 @@ func checkGoogle(ctx context.Context, ep proxySpec) result {
 }
 
 func monitorPlan(ctx context.Context, p proxyPlan, writer io.Writer) int {
+	enc := json.NewEncoder(writer)
+	return collectPlan(ctx, p, func(r result) error { return enc.Encode(r) })
+}
+
+func collectPlan(ctx context.Context, p proxyPlan, emit func(result) error) int {
 	out := make(chan result, 16)
 	var wg sync.WaitGroup
 	// Share IP123 trust and IPinfo lookups for services using the same endpoint.
@@ -240,13 +245,13 @@ func monitorPlan(ctx context.Context, p proxyPlan, writer io.Writer) int {
 	wg.Add(1)
 	go func() { defer wg.Done(); out <- checkGoogle(ctx, p.endpoint("Antigravity")) }()
 	go func() { wg.Wait(); close(out) }()
-	enc := json.NewEncoder(writer)
+	failed := 0
 	for v := range out {
-		if enc.Encode(v) != nil {
-			return 1
+		if emit(v) != nil {
+			failed = 1
 		}
 	}
-	return 0
+	return failed
 }
 
 func servePlan(ctx context.Context, p proxyPlan, input *bufio.Scanner, ln net.Listener, activity *liveFlows) int {
