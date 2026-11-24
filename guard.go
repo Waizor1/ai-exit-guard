@@ -444,6 +444,19 @@ func (c *checker) resultsFor(selected []target) <-chan result {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) == 2 && os.Args[1] == "t3-protect" && runtime.GOOS == "darwin" {
+		home, homeErr := os.UserHomeDir()
+		exe, exeErr := os.Executable()
+		if homeErr != nil || exeErr != nil {
+			os.Exit(1)
+		}
+		if err := configureT3(filepath.Join(home, ".t3", "userdata", "settings.json"), filepath.Dir(exe)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("Строгий запуск настроен для новых процессов T3. Для отключения очистите поле Binary path в настройках провайдера.")
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "system-profile" {
 		if writeSystemProfile(os.Stdout, runtime.GOOS) != nil {
 			os.Exit(1)

@@ -47,6 +47,7 @@ struct GuardPanel: View {
                 Button("Общий прокси"){model.proxySettings=true}.buttonStyle(.link)
                 setting("bell","Уведомления",model.notificationState,model.notificationState=="Разрешены" ? "Тест" : model.notificationState=="Выключены" ? "Настройки" : "Разрешить",model.notifications)
                 setting("power","Запуск при входе",model.loginState,model.loginState=="Выключен" ? "Включить" : "Настройки",model.login)
+                Button("Защитить процессы T3…"){ NSWorkspace.shared.open(Bundle.main.resourceURL!.appendingPathComponent("T3 Protection.command")) }
                 Button("Системные правила…"){ NSWorkspace.shared.open(Bundle.main.resourceURL!.appendingPathComponent("Guard System.command")) }
                 Button("Инструкция"){ NSWorkspace.shared.open(Bundle.main.resourceURL!.appendingPathComponent("Инструкция.txt")) }
                 Divider()

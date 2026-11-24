@@ -8,16 +8,19 @@ if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable
         Add-Type -AssemblyName UIAutomationClient
         $id=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$ui.Id)
         $title=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'AI Exit Guard')
-        $window=$null
-        $deadline=[DateTime]::UtcNow.AddSeconds(15)
-        while (!$window -and !$ui.HasExited -and [DateTime]::UtcNow -lt $deadline) {
-            $condition=New-Object Windows.Automation.AndCondition($id,$title)
-            $window=[Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children,$condition)
-            if(!$window){Start-Sleep -Milliseconds 200}
-        }
-        if(!$window){throw 'Windows form missing from native accessibility tree'}
+        $ready=$false
+        $deadline=[DateTime]::UtcNow.AddSeconds(20)
+        $condition=New-Object Windows.Automation.AndCondition($id,$title)
         $edits=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Edit)
-        if($window.FindAll([Windows.Automation.TreeScope]::Descendants,$edits).Count -ne 8){throw 'Missing proxy fields'}
+        while (!$ready -and !$ui.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+            foreach($window in [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,$condition)) {
+                $fields=$window.FindAll([Windows.Automation.TreeScope]::Descendants,$edits)
+                if($fields.Count -eq 8){$ready=$true;break}
+            }
+            if(!$ready){Start-Sleep -Milliseconds 250}
+        }
+        if(!$ready){throw "Visible form with eight proxy fields missing (last count $($fields.Count))"}
+
     } finally {if(!$ui.HasExited){$ui.Kill();$ui.WaitForExit()}}
     $profile=Get-Content -Raw (Join-Path $dir 'AI Exit Guard.pbprofile') | ConvertFrom-Json
     if($profile.ProxyConfigs[0].Host -ne '127.0.0.1' -or $profile.ProxyConfigs[0].Port -ne '39178'){throw 'Wrong relay'}
