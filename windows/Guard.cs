@@ -172,7 +172,7 @@ sealed class GuardWindow : Form {
     [STAThread] static int Main(string[] args){
         if(args.Length==2 && (args[0]=="--client-on" || args[0]=="--client-off")){
             try{ClientLock.Apply(Encoding.UTF8.GetString(Convert.FromBase64String(args[1])),args[0]=="--client-on");return 0;}
-            catch(Exception ex){if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")MessageBox.Show(ex.Message,"Брандмауэр Windows");return 1;}
+            catch(Exception ex){if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")=="true")Console.Error.WriteLine(ex.GetType().Name+" "+ex.Message);else MessageBox.Show(ex.Message,"Брандмауэр Windows");return 1;}
         }
         if(args.Length==1 && (args[0]=="--domains-on" || args[0]=="--domains-off")){
             try{DomainLock.Apply(args[0]=="--domains-on");return 0;}catch(Exception ex){if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")MessageBox.Show(ex.Message,"Защита доменов");return 1;}

@@ -41,10 +41,14 @@ try {
 $gui=(Resolve-Path (Join-Path $PSScriptRoot '..\dist\windows-x64\AI Exit Guard.exe')).Path
 & $protected --disable --noproxy '*' --silent --fail --head --max-time 8 https://github.com | Out-Null
 if($LASTEXITCODE){throw 'Test client has no baseline direct connection'}
+# Hosted images may start with an inactive profile; the product deliberately refuses
+# to report firewall protection until all three profiles can enforce its rules.
+Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True
+Get-NetFirewallProfile | Select-Object Name,Enabled | Format-Table
 $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($protected))
 try {
-    $enable=Start-Process $gui -ArgumentList "--client-on $encoded" -Wait -PassThru
-    if($enable.ExitCode){throw 'Persistent firewall switch failed to enable'}
+    $enable=Start-Process $gui -ArgumentList "--client-on $encoded" -Wait -PassThru -RedirectStandardError (Join-Path $stage firewall.err)
+    if($enable.ExitCode){Get-Content (Join-Path $stage firewall.err);throw 'Persistent firewall switch failed to enable'}
     $entries=@(Get-NetFirewallRule -Group 'AI Exit Guard' -ErrorAction Stop | Where-Object { ($_ | Get-NetFirewallApplicationFilter).Program -eq $protected })
     & $protected --disable --noproxy '*' --silent --head --max-time 5 https://github.com | Out-Null
     if($LASTEXITCODE -eq 0){throw 'Direct client request passed the persistent firewall'}
