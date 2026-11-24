@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"time"
 )
 
@@ -87,7 +89,7 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int {
 	sc := bufio.NewScanner(input)
 	var c desktopConfig
-	if !sc.Scan() || json.Unmarshal(sc.Bytes(), &c) != nil || !c.valid() {
+	if !sc.Scan() || json.Unmarshal(bytes.TrimPrefix(sc.Bytes(), []byte{0xef, 0xbb, 0xbf}), &c) != nil || !c.valid() {
 		return 2
 	}
 	if _, err := canonical(c.Expected); err != nil {
@@ -103,6 +105,14 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	if runtime.GOOS == "windows" {
+		local, err := net.Listen("tcp4", net.JoinHostPort(ingressIP, "443"))
+		if err != nil {
+			ln.Close()
+			return 3
+		}
+		go func() { defer cancel(); _ = serveIngress(ctx, local, localProxy) }()
+	}
 	relay := &serviceRelay{}
 	relay.configure(c.proxyPlan)
 	defer relay.close()

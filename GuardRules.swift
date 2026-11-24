@@ -4,7 +4,7 @@ import Darwin
 // Explicit proxy clients send the destination name to Guard. The upstream
 // resolves it remotely; a direct lookup on this Mac must lead to loopback.
 enum DirectRouteLock {
-    static let hosts = [
+    static let legacyHosts = [
         "claude.ai", "www.claude.ai", "api.claude.ai", "claude.com",
         "anthropic.com", "api.anthropic.com", "platform.claude.com",
         "console.anthropic.com", "platform.claude.ai",
@@ -12,9 +12,26 @@ enum DirectRouteLock {
         "chat.openai.com", "api.openai.com", "auth.openai.com",
         "auth0.openai.com", "platform.openai.com", "auth.chatgpt.com"
     ]
+    static let hosts = [
+        "claude.ai", "claude.com", "anthropic.com",
+        "claudeusercontent.com", "claudemcpcontent.com", "openai.com",
+        "chatgpt.com", "oaistatic.com", "oaiusercontent.com",
+        "oaistatsig.com", "openaimerge.com", "antigravity.google",
+        "antigravity.google.com", "aicode.googleapis.com", "cloudcode-pa.googleapis.com",
+        "daily-cloudcode-pa.googleapis.com", "jetski-webchannel.googleapis.com", "businessaicode.googleapis.com",
+        "businessaicode.us.rep.googleapis.com", "businessaicode.eu.rep.googleapis.com", "businessaicode.mtls.googleapis.com",
+        "antigravity-hub-auto-updater-974169037036.us-central1.run.app", "antigravity-ide-auto-updater-974169037036.us-central1.run.app", "www.claude.ai",
+        "api.claude.ai", "api.anthropic.com", "platform.claude.com",
+        "console.anthropic.com", "platform.claude.ai", "www.chatgpt.com",
+        "ab.chatgpt.com", "ws.chatgpt.com", "chat.openai.com",
+        "api.openai.com", "auth.openai.com", "auth0.openai.com",
+        "platform.openai.com", "auth.chatgpt.com", "cdn.oaistatic.com",
+        "files.oaiusercontent.com", "generativelanguage.googleapis.com"
+    ]
     static let begin = "# BEGIN AI Exit Guard model hosts"
     static let end = "# END AI Exit Guard model hosts"
-    static let block = ([begin] + hosts.map { "127.0.0.2 " + $0 } + hosts.map { "::1 " + $0 } + [end]).joined(separator:"\n") + "\n"
+    static let legacyBlock = ([begin] + legacyHosts.map { "127.0.0.2 " + $0 } + legacyHosts.map { "::1 " + $0 } + [end]).joined(separator:"\n") + "\n"
+    static let block = ([begin] + hosts.map { "127.0.0.2 " + $0 } + hosts.map { "::ffff:127.0.0.2 " + $0 } + [end]).joined(separator:"\n") + "\n"
     enum State { case off, on, conflict, unknown }
     static func state(_ data:String) -> State {
         let lines=data.components(separatedBy:"\n")
@@ -35,7 +52,7 @@ enum DirectRouteLock {
             let address=current.pointee
             var name=[CChar](repeating:0,count:Int(NI_MAXHOST))
             guard getnameinfo(address.ai_addr,address.ai_addrlen,&name,socklen_t(name.count),nil,0,NI_NUMERICHOST)==0,
-                  ["127.0.0.2","::1"].contains(String(cString:name)) else {return false}
+                  ["127.0.0.2","::ffff:127.0.0.2"].contains(String(cString:name)) else {return false}
             node=address.ai_next
         }
         return true
@@ -50,7 +67,7 @@ enum DirectRouteLock {
 use strict; use warnings;
 use Fcntl qw(:flock);
 use File::Temp qw(tempfile);
-my ($dir,$enable,$block)=@ARGV;
+my ($dir,$enable,$block,$legacy)=@ARGV;
 open(my $lock, "<", $dir) or die "open directory";
 flock($lock, LOCK_EX) or die "lock";
 my $path="$dir/hosts";
@@ -59,8 +76,12 @@ sub readfile { open(my $f,'<:raw',$path) or die "read hosts"; local $/; return <
 my $old=readfile(); my $new=$old;
 my ($begin,@lines)=split(/\n/,$block); my $end=pop @lines;
 my @marks=($old =~ /^(\Q$begin\E|\Q$end\E)$/mg);
+if ($enable eq 'upgrade') {
+    exit 0 unless defined $legacy && index("\n".$old, "\n".$legacy) >= 0;
+    $enable='on';
+}
 if (@marks) {
-    die "modified block" unless @marks==2 && $marks[0] eq $begin && $marks[1] eq $end && $new =~ s/^\Q$block\E//m;
+    die "modified block" unless @marks==2 && $marks[0] eq $begin && $marks[1] eq $end && ($new =~ s/^\Q$block\E//m || (defined $legacy && $new =~ s/^\Q$legacy\E//m));
 }
 if ($enable eq 'on') {
     my %hosts=map { (split / /)[1] => 1 } @lines;

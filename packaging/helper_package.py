@@ -24,3 +24,9 @@ plist.write_bytes(plistlib.dumps({
     'Label': service, 'ProgramArguments': [f'/Library/PrivilegedHelperTools/{service}', requirement],
     'MachServices': {service: True}, 'ProcessType': 'Background',
 }))
+
+ingress = 'local.aiexitguard.ingress'
+(plist.parent / (ingress+'.plist')).write_bytes(plistlib.dumps({
+    'Label': ingress, 'ProgramArguments': ['/Library/PrivilegedHelperTools/'+ingress,'ingress-bootstrap'],
+    'KeepAlive': True, 'ThrottleInterval': 30, 'ProcessType': 'Background',
+}))

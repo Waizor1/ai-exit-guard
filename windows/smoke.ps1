@@ -13,8 +13,9 @@ if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable
     $p=[Diagnostics.Process]::Start($psi)
     try {
         $p.StandardInput.WriteLine('{"Common":{"Scheme":"http","Host":"127.0.0.1","Port":1},"Expected":"192.0.2.1","Profiles":{}}')
+        $p.StandardInput.Flush()
         $ready=$p.StandardOutput.ReadLineAsync()
-        if(!$ready.Wait(8000) -or $ready.Result -ne 'READY'){throw 'Relay did not start'}
+        if(!$ready.Wait(8000) -or $ready.Result -ne 'READY'){throw "Relay did not start (exited=$($p.HasExited), code=$($p.ExitCode), status=$($ready.Status))"}
         $tcp=New-Object Net.Sockets.TcpClient('127.0.0.1',39178)
         try {
             $stream=$tcp.GetStream();$stream.ReadTimeout=5000

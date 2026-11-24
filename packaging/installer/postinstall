@@ -2,8 +2,12 @@
 set -eu
 # Only register on the system currently running.
 [ "${3:-/}" = / ] || exit 0
-service=local.aiexitguard.rules
+for service in local.aiexitguard.ingress local.aiexitguard.rules; do
 if /bin/launchctl print "system/$service" >/dev/null 2>&1; then
     /bin/launchctl bootout "system/$service"
 fi
 /bin/launchctl bootstrap system "/Library/LaunchDaemons/$service.plist"
+done
+/Library/PrivilegedHelperTools/local.aiexitguard.rules --upgrade-hosts
+/usr/bin/dscacheutil -flushcache
+/usr/bin/killall -HUP mDNSResponder || true

@@ -17,6 +17,7 @@ sealed class GuardWindow : Form {
     readonly string[] names = {"Общий", "Claude", "ChatGPT", "Antigravity"};
     readonly TextBox[] urls = new TextBox[4], ips = new TextBox[4];
     readonly Label status = new Label();
+    readonly Button dns=new Button();
     readonly Button start = new Button();
     readonly NotifyIcon tray = new NotifyIcon();
     readonly Timer timer = new Timer();
@@ -43,6 +44,14 @@ sealed class GuardWindow : Form {
         start.Click+=(s,e)=>{if(relay==null) Connect();else Stop();};Controls.Add(start);
         var filter=new Button{Text="Системные правила…"};filter.SetBounds(161,247,180,31);
         filter.Click+=(s,e)=>SystemRules();Controls.Add(filter);
+        dns.SetBounds(350,247,268,31);dns.AccessibleName="Защита известных доменов через системный DNS";
+        Action refresh=()=>{try{dns.Text=DomainLock.Enabled()?"Отключить защиту доменов":"Включить защиту доменов";}catch{dns.Text="Проверьте файл hosts";dns.Enabled=false;}};
+        dns.Click+=(s,e)=>{try{
+            string arg=DomainLock.Enabled()?"--domains-off":"--domains-on";
+            using(var helper=Process.Start(new ProcessStartInfo(Application.ExecutablePath,arg){UseShellExecute=true,Verb="runas"})){helper.WaitForExit();}
+            refresh();
+        }catch{State("Защита доменов не изменена.",false);}};
+        Controls.Add(dns);refresh();
         status.SetBounds(16,292,610,32);Controls.Add(status);
         tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.DoubleClick+=(s,e)=>ShowWindow();
         var menu=new ContextMenuStrip();menu.Items.Add("Открыть",null,(s,e)=>ShowWindow());
@@ -129,6 +138,8 @@ sealed class GuardWindow : Form {
         }catch{MessageBox.Show("Системный фильтр не запущен. Проверьте разрешение администратора.");}
     }
     int ExerciseForm(){
+        string original="127.0.0.1 localhost\r\n";string on=DomainLock.Edit(original,true);
+        if(DomainLock.Edit(on,false)!=original || DomainLock.Edit(on,true)!=on || !on.Contains("127.0.0.2 daily-cloudcode-pa.googleapis.com"))return 18;
         if(!Visible || !IsHandleCreated || !tray.Visible || urls.Length!=4 || ips.Length!=4)return 11;
         for(int i=0;i<4;i++){
             if(!urls[i].Created || !ips[i].Created || !ClientRectangle.Contains(ips[i].Bounds) || !ClientRectangle.Contains(urls[i].Bounds))return 12;
@@ -143,6 +154,9 @@ sealed class GuardWindow : Form {
         return 0;
     }
     [STAThread] static int Main(string[] args){
+        if(args.Length==1 && (args[0]=="--domains-on" || args[0]=="--domains-off")){
+            try{DomainLock.Apply(args[0]=="--domains-on");return 0;}catch(Exception ex){MessageBox.Show(ex.Message,"Защита доменов");return 1;}
+        }
         bool smoke=args.Length==1 && args[0]=="--smoke-test";
         string data=smoke?Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()):Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AI Exit Guard");
         int result=smoke?10:0;

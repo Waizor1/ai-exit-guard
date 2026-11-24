@@ -10,7 +10,7 @@ source = (root / 'GuardRules.swift').read_text()
 program = source.split('static let editor = #"""\n', 1)[1].split('\n"""#', 1)[0]
 names = re.findall(r'"([\w.-]+)"', source.split('static let hosts = [', 1)[1].split(']', 1)[0])
 begin, end = (re.search('static let '+k+r' = "(.+)"', source)[1] for k in ('begin','end'))
-block = '\n'.join([begin, *('127.0.0.2 '+h for h in names), *('::1 '+h for h in names), end, ''])
+block = '\n'.join([begin, *('127.0.0.2 '+h for h in names), *('::ffff:127.0.0.2 '+h for h in names), end, ''])
 assert {'api.anthropic.com','chatgpt.com','api.openai.com','claude.ai'} <= set(names)
 with tempfile.TemporaryDirectory() as directory:
     hosts = pathlib.Path(directory)/'hosts'

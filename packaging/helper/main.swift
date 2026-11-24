@@ -29,7 +29,7 @@ final class RuleService: NSObject, NSXPCListenerDelegate, GuardRuleControl {
         writes.async {
             guard self.isConsoleUser(peer) else { reply(false); return }
             let args = ["-e", DirectRouteLock.editor, "--", "/private/etc",
-                        enabled ? "on" : "off", DirectRouteLock.block]
+                        enabled ? "on" : "off", DirectRouteLock.block, DirectRouteLock.legacyBlock]
             let applied = self.run("/usr/bin/perl", args)
                 && self.run("/usr/bin/dscacheutil", ["-flushcache"])
                 && self.run("/usr/bin/killall", ["-HUP", "mDNSResponder"])
@@ -54,6 +54,11 @@ final class RuleService: NSObject, NSXPCListenerDelegate, GuardRuleControl {
     }
 }
 
+if CommandLine.arguments == [CommandLine.arguments[0],"--upgrade-hosts"], geteuid()==0 {
+    let task=Process();task.executableURL=URL(fileURLWithPath:"/usr/bin/perl")
+    task.arguments=["-e",DirectRouteLock.editor,"--","/private/etc","upgrade",DirectRouteLock.block,DirectRouteLock.legacyBlock]
+    task.environment=["PATH":"/usr/bin:/bin"];try task.run();task.waitUntilExit();exit(task.terminationStatus)
+}
 guard geteuid() == 0, CommandLine.arguments.count == 2 else { exit(1) }
 let listener = NSXPCListener(machServiceName: guardServiceName)
 listener.setConnectionCodeSigningRequirement(CommandLine.arguments[1])

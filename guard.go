@@ -444,6 +444,21 @@ func (c *checker) resultsFor(selected []target) <-chan result {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if len(os.Args) == 2 {
+		switch os.Args[1] {
+		case "system-hosts":
+			for _, h := range mappedHosts {
+				fmt.Println(h)
+			}
+			return
+		case "ingress-bootstrap", "ingress-worker":
+			if err := systemIngress(ctx, os.Args[1]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
 	if len(os.Args) == 2 && os.Args[1] == "t3-protect" && runtime.GOOS == "darwin" {
 		home, homeErr := os.UserHomeDir()
 		exe, exeErr := os.Executable()

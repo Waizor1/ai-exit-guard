@@ -51,6 +51,7 @@ codesign "${sign[@]}" "$app/Contents/Helpers/TraceProbe"
 codesign "${sign[@]}" "$res/guard"
 codesign "${sign[@]}" "$app"
 codesign --verify --strict --deep "$app"
+install -m 755 "$res/guard" "$stage/root/Library/PrivilegedHelperTools/local.aiexitguard.ingress"
 python3 packaging/helper_package.py "$stage/root"
 pkgbuild --analyze --root "$stage/root" "$stage/components.plist"
 python3 - "$stage/components.plist" <<'PKG'
