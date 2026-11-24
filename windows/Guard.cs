@@ -21,13 +21,14 @@ sealed class GuardWindow : Form {
     readonly NotifyIcon tray = new NotifyIcon();
     readonly Timer timer = new Timer();
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
-    readonly string saved = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AI Exit Guard","routes.bin");
+    readonly string saved;
     readonly string dir = AppDomain.CurrentDomain.BaseDirectory;
     Process relay;
     Task<string> next;
     bool quitting;
     DateTime lastReport;
-    public GuardWindow() {
+    public GuardWindow(string dataDirectory) {
+        saved=Path.Combine(dataDirectory,"routes.bin");
         Text="AI Exit Guard"; ClientSize=new Size(640,330); AutoScaleMode=AutoScaleMode.Font;
         Font=SystemFonts.MessageBoxFont; FormBorderStyle=FormBorderStyle.FixedDialog; MaximizeBox=false;
         AddLabel("Прокси для ИИ",16,14,480);
@@ -127,5 +128,33 @@ sealed class GuardWindow : Form {
             Process.Start(new ProcessStartInfo(engine,"--profile \""+Path.Combine(dir,"AI Exit Guard.pbprofile")+"\" --verbose 1"){UseShellExecute=true,Verb="runas",WorkingDirectory=Path.GetDirectoryName(engine)});
         }catch{MessageBox.Show("Системный фильтр не запущен. Проверьте разрешение администратора.");}
     }
-    [STAThread] static void Main(){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new GuardWindow());}
+    int ExerciseForm(){
+        if(!Visible || !IsHandleCreated || !tray.Visible || urls.Length!=4 || ips.Length!=4)return 11;
+        for(int i=0;i<4;i++){
+            if(!urls[i].Created || !ips[i].Created || !ClientRectangle.Contains(ips[i].Bounds) || !ClientRectangle.Contains(urls[i].Bounds))return 12;
+        }
+        urls[0].Text="http://127.0.0.1:1";ips[0].Text="invalid";start.PerformClick();
+        if(relay!=null || !status.Text.Contains("IP"))return 13;
+        ips[0].Text="192.0.2.1"; start.PerformClick();
+        if(relay==null || relay.HasExited || !File.Exists(saved) || urls[0].Enabled)return 14;
+        byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(saved),null,DataProtectionScope.CurrentUser);
+        if(!Encoding.UTF8.GetString(plain).Contains("192.0.2.1"))return 15;
+        start.PerformClick();if(relay!=null || !urls[0].Enabled)return 16;
+        return 0;
+    }
+    [STAThread] static int Main(string[] args){
+        bool smoke=args.Length==1 && args[0]=="--smoke-test";
+        string data=smoke?Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()):Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AI Exit Guard");
+        int result=smoke?10:0;
+        Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
+        using(var form=new GuardWindow(data)){
+            if(smoke)form.Shown+=(s,e)=>form.BeginInvoke(new Action(()=>{
+                try{result=form.ExerciseForm();}catch{result=17;}
+                form.quitting=true;form.Close();
+            }));
+            Application.Run(form);
+        }
+        if(smoke && Directory.Exists(data))Directory.Delete(data,true);
+        return result;
+    }
 }

@@ -2,26 +2,9 @@ $ErrorActionPreference='Stop'
 $dir=(Resolve-Path (Join-Path $PSScriptRoot '..\dist\windows-x64')).Path
 if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable CI runner'}
 & {
-    $ui=Start-Process (Join-Path $dir 'AI Exit Guard.exe') -PassThru
-    try {
-        if(!$ui.WaitForInputIdle(15000)){throw 'Windows UI failed to initialize'}
-        Add-Type -AssemblyName UIAutomationClient
-        $id=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty,$ui.Id)
-        $title=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'AI Exit Guard')
-        $ready=$false
-        $deadline=[DateTime]::UtcNow.AddSeconds(20)
-        $condition=New-Object Windows.Automation.AndCondition($id,$title)
-        $edits=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Edit)
-        while (!$ready -and !$ui.HasExited -and [DateTime]::UtcNow -lt $deadline) {
-            foreach($window in [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,$condition)) {
-                $fields=$window.FindAll([Windows.Automation.TreeScope]::Descendants,$edits)
-                if($fields.Count -eq 8){$ready=$true;break}
-            }
-            if(!$ready){Start-Sleep -Milliseconds 250}
-        }
-        if(!$ready){throw "Visible form with eight proxy fields missing (last count $($fields.Count))"}
-
-    } finally {if(!$ui.HasExited){$ui.Kill();$ui.WaitForExit()}}
+    $ui=Start-Process (Join-Path $dir 'AI Exit Guard.exe') -ArgumentList '--smoke-test' -PassThru
+    if(!$ui.WaitForExit(25000)){$ui.Kill();throw 'GUI smoke timed out'}
+    if($ui.ExitCode -ne 0){throw "Native form test failed at stage $($ui.ExitCode)"}
     $profile=Get-Content -Raw (Join-Path $dir 'AI Exit Guard.pbprofile') | ConvertFrom-Json
     if($profile.ProxyConfigs[0].Host -ne '127.0.0.1' -or $profile.ProxyConfigs[0].Port -ne '39178'){throw 'Wrong relay'}
     $psi=New-Object Diagnostics.ProcessStartInfo
