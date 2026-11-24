@@ -61,11 +61,13 @@ func forwardTLS(client net.Conn, relay string) {
 	if _, err = fmt.Fprintf(peer, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
 		return
 	}
-	response := bufio.NewReaderSize(peer, 4096)
+	headers := &io.LimitedReader{R: peer, N: 32768}
+	response := bufio.NewReaderSize(headers, 4096)
 	res, err := http.ReadResponse(response, &http.Request{Method: "CONNECT"})
 	if err != nil || res.StatusCode != http.StatusOK {
 		return
 	}
+	headers.N = 1 << 62
 	if _, err = io.Copy(peer, &prefix); err != nil {
 		return
 	}

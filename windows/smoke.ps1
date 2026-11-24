@@ -25,5 +25,17 @@ if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable
             if($reader.ReadLine() -notmatch '^HTTP/1\.1 503'){throw 'An unchecked route was allowed'}
         } finally {$tcp.Dispose()}
     } finally {$p.StandardInput.Close();if(!$p.WaitForExit(10000)){$p.Kill();throw 'Relay survived controller shutdown'}}
+    # Exercise the actual OS resolver transaction on this disposable Windows host.
+    $uiExe=Join-Path $dir 'AI Exit Guard.exe'
+    try {
+        $on=Start-Process $uiExe -ArgumentList '--domains-on' -PassThru
+        if(!$on.WaitForExit(10000) -or $on.ExitCode){throw 'Windows hosts activation failed'}
+        $addrs=[Net.Dns]::GetHostAddresses('daily-cloudcode-pa.googleapis.com')
+        if(!$addrs.Count){throw 'No protected DNS answer'}
+        foreach($addr in $addrs){if($addr.MapToIPv4().ToString() -ne '127.0.0.2'){throw 'Unexpected nonlocal route'}}
+    }finally{
+        $off=Start-Process $uiExe -ArgumentList '--domains-off' -PassThru
+        if(!$off.WaitForExit(10000) -or $off.ExitCode){throw 'Windows hosts rollback failed'}
+    }
     Write-Host 'Windows GUI, system profile, closed relay, and controller shutdown passed'
 }

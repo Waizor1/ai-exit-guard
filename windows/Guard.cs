@@ -27,10 +27,10 @@ sealed class GuardWindow : Form {
     Process relay;
     Task<string> next;
     bool quitting;
-    DateTime lastReport;
+    Dictionary<string,long> leases;
     public GuardWindow(string dataDirectory) {
         saved=Path.Combine(dataDirectory,"routes.bin");
-        Text="AI Exit Guard"; ClientSize=new Size(640,330); AutoScaleMode=AutoScaleMode.Font;
+        Text="AI Exit Guard"; ClientSize=new Size(640,375); AutoScaleMode=AutoScaleMode.Font;
         Font=SystemFonts.MessageBoxFont; FormBorderStyle=FormBorderStyle.FixedDialog; MaximizeBox=false;
         AddLabel("Прокси для ИИ",16,14,480);
         AddLabel("Сервис",16,52,95); AddLabel("Прокси (http, https или socks5)",120,52,300); AddLabel("Ожидаемый выходной IP",436,52,195);
@@ -52,7 +52,20 @@ sealed class GuardWindow : Form {
             refresh();
         }catch{State("Защита доменов не изменена.",false);}};
         Controls.Add(dns);refresh();
-        status.SetBounds(16,292,610,32);Controls.Add(status);
+        var strict=new Button{Text="Строгий режим для клиента…"};strict.SetBounds(16,287,276,31);Controls.Add(strict);
+        strict.Click+=(s,e)=>{
+            using(var picker=new OpenFileDialog{Title="Выберите Codex, Claude или Antigravity",Filter="Приложения (*.exe)|*.exe"}){
+                if(picker.ShowDialog()!=DialogResult.OK)return;
+                try {
+                    string target=picker.FileName;bool active=ClientLock.Active(target);
+                    string detail=active?"Снять запрет прямого выхода для этого файла?":"Закрыть этому файлу прямой интернет? Для работы задайте HTTP-прокси 127.0.0.1:39178. Правила действуют, пока включён брандмауэр Windows.";
+                    if(MessageBox.Show(detail,target,MessageBoxButtons.OKCancel)!=DialogResult.OK)return;
+                    var selected=new ProcessStartInfo(Application.ExecutablePath,(active?"--client-off ":"--client-on ")+Convert.ToBase64String(Encoding.UTF8.GetBytes(target))){UseShellExecute=true,Verb="runas"};
+                    using(var helper=Process.Start(selected)){helper.WaitForExit();if(helper.ExitCode==0)MessageBox.Show(active?"Запрет снят.":"Запрет прямого выхода установлен.");}
+                }catch(Exception ex){MessageBox.Show(ex.Message,"Строгий режим");}
+            }
+        };
+        status.SetBounds(16,337,610,32);Controls.Add(status);
         tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.DoubleClick+=(s,e)=>ShowWindow();
         var menu=new ContextMenuStrip();menu.Items.Add("Открыть",null,(s,e)=>ShowWindow());
         menu.Items.Add("Выход",null,(s,e)=>{quitting=true;Close();});tray.ContextMenuStrip=menu;
@@ -94,7 +107,7 @@ sealed class GuardWindow : Form {
             var cfg=new {Common=common,Expected=routes[0].IP,Profiles=profiles};
             var psi=new ProcessStartInfo(Path.Combine(dir,"guard-core.exe"),"desktop-relay"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true};
             relay=Process.Start(psi); relay.StandardInput.WriteLine(json.Serialize(cfg));relay.StandardInput.Flush();
-            next=relay.StandardOutput.ReadLineAsync();lastReport=DateTime.UtcNow;
+            next=relay.StandardOutput.ReadLineAsync();leases=null;
             Directory.CreateDirectory(Path.GetDirectoryName(saved));
             byte[] data=ProtectedData.Protect(Encoding.UTF8.GetBytes(json.Serialize(routes)),null,DataProtectionScope.CurrentUser);
             string temp=Path.Combine(Path.GetDirectoryName(saved),Guid.NewGuid().ToString()+".tmp");
@@ -110,7 +123,7 @@ sealed class GuardWindow : Form {
             try{relay.StandardInput.Close();if(!relay.WaitForExit(1200))relay.Kill();}catch(InvalidOperationException){}
             relay.Dispose();relay=null;
         }
-        next=null;Inputs(true);start.Text="Подключить";State("Прокси выключен",false);
+        next=null;leases=null;Inputs(true);start.Text="Подключить";State("Прокси выключен",false);
     }
     void Poll(){
         if(relay==null)return;
@@ -120,11 +133,14 @@ sealed class GuardWindow : Form {
                 string line=next.Result;if(line==null){Stop();return;}
                 next=relay.StandardOutput.ReadLineAsync();
                 if(line=="READY")return;
-                var rows=json.Deserialize<Dictionary<string,bool>>(line);
+                leases=json.Deserialize<Dictionary<string,long>>(line);
+            }
+            if(leases!=null) {
+                long now=(long)(DateTime.UtcNow-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds;
                 var labels=new List<string>();bool all=true;
-                foreach(string n in new[]{"Claude","ChatGPT","Antigravity"}){bool ok=rows[n];all&=ok;labels.Add(n+(ok?" — открыт":" — закрыт"));}
-                lastReport=DateTime.UtcNow;State(String.Join("   ",labels),all);
-            }else if((DateTime.UtcNow-lastReport).TotalSeconds>180) State("Проверка устарела. Обновляем статус.",false);
+                foreach(string n in new[]{"Claude","ChatGPT","Antigravity"}){long until;bool ok=leases.TryGetValue(n,out until) && until>now;all&=ok;labels.Add(n+(ok?" — открыт":" — закрыт"));}
+                string current=String.Join("   ",labels);if(status.Text!=current)State(current,all);
+            }
         }catch{Stop();State("Связь с Guard потеряна.",false);}
     }
     void SystemRules(){
@@ -154,8 +170,12 @@ sealed class GuardWindow : Form {
         return 0;
     }
     [STAThread] static int Main(string[] args){
+        if(args.Length==2 && (args[0]=="--client-on" || args[0]=="--client-off")){
+            try{ClientLock.Apply(Encoding.UTF8.GetString(Convert.FromBase64String(args[1])),args[0]=="--client-on");return 0;}
+            catch(Exception ex){if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")MessageBox.Show(ex.Message,"Брандмауэр Windows");return 1;}
+        }
         if(args.Length==1 && (args[0]=="--domains-on" || args[0]=="--domains-off")){
-            try{DomainLock.Apply(args[0]=="--domains-on");return 0;}catch(Exception ex){MessageBox.Show(ex.Message,"Защита доменов");return 1;}
+            try{DomainLock.Apply(args[0]=="--domains-on");return 0;}catch(Exception ex){if(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true")MessageBox.Show(ex.Message,"Защита доменов");return 1;}
         }
         bool smoke=args.Length==1 && args[0]=="--smoke-test";
         string data=smoke?Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString()):Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AI Exit Guard");

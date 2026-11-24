@@ -36,3 +36,23 @@ try {
     if(!$arrived){throw 'The real protecting driver did not redirect the unconfigured client to Guard'}
     Write-Host 'Verified Windows driver routes a protected executable to Guard'
 } finally {$listener.Stop();if(!$engine.HasExited){$engine.Kill();$engine.WaitForExit()}}
+
+# Verify the durable per-executable switch independently of the redirector.
+$gui=(Resolve-Path (Join-Path $PSScriptRoot '..\dist\windows-x64\AI Exit Guard.exe')).Path
+& $protected --disable --noproxy '*' --silent --fail --head --max-time 8 https://github.com | Out-Null
+if($LASTEXITCODE){throw 'Test client has no baseline direct connection'}
+$encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($protected))
+try {
+    $enable=Start-Process $gui -ArgumentList "--client-on $encoded" -Wait -PassThru
+    if($enable.ExitCode){throw 'Persistent firewall switch failed to enable'}
+    $entries=@(Get-NetFirewallRule -Group 'AI Exit Guard' -ErrorAction Stop | Where-Object { ($_ | Get-NetFirewallApplicationFilter).Program -eq $protected })
+    & $protected --disable --noproxy '*' --silent --head --max-time 5 https://github.com | Out-Null
+    if($LASTEXITCODE -eq 0){throw 'Direct client request passed the persistent firewall'}
+    if($entries.Count -ne 3 -or @($entries | Where-Object {$_.Enabled -ne 'True' -or $_.Action -ne 'Block' -or $_.Direction -ne 'Outbound'}).Count){throw 'Incomplete Windows firewall policy'}
+} finally {
+    $disable=Start-Process $gui -ArgumentList "--client-off $encoded" -Wait -PassThru
+    if($disable.ExitCode){throw 'Persistent firewall rollback failed'}
+}
+
+& $protected --disable --noproxy '*' --silent --fail --head --max-time 8 https://github.com | Out-Null
+if($LASTEXITCODE){throw 'Direct connection did not recover after removing owned rules'}

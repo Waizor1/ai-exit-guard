@@ -446,6 +446,12 @@ func main() {
 	defer stop()
 	if len(os.Args) == 2 {
 		switch os.Args[1] {
+		case "filter-run", "filter-on", "filter-off":
+			if err := filterCommand(ctx, os.Args[1]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "system-hosts":
 			for _, h := range mappedHosts {
 				fmt.Println(h)

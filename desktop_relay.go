@@ -44,7 +44,7 @@ func acceptedReading(r result, pin string, countries map[string]string, now time
 	return r.Status == "green" && valid(r.Trust) && *r.Trust > 200.0/3
 }
 
-func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, countries map[string]string, output io.Writer) {
+func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, countries map[string]string, state map[string]int64, output io.Writer) {
 	rows := map[string]result{}
 	collectPlan(ctx, c.proxyPlan, func(r result) error {
 		service := serviceForHost(r.Host)
@@ -53,10 +53,14 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		// A changed exit or a red reading must revoke the *previous* lease now.
 		if r.IP != c.pin(service) || r.Status == "red" || (r.Risk != nil && *r.Risk > 66) || (r.TraceCountry != "" && !isProtectedCountry(service, r.TraceCountry, countries)) {
 			relay.control(service + " 0")
+			if state[service] != 0 {
+				state[service] = 0
+				json.NewEncoder(output).Encode(state)
+			}
 		}
 		return nil
 	})
-	state := map[string]bool{}
+
 	for _, service := range services {
 		var group []string
 		if service == "Antigravity" {
@@ -81,7 +85,10 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 				until = end
 			}
 		}
-		state[service] = relay.control(fmt.Sprintf("%s %d", service, until.Unix())) == "OPEN"
+		state[service] = 0
+		if relay.control(fmt.Sprintf("%s %d", service, until.Unix())) == "OPEN" {
+			state[service] = until.Unix()
+		}
 	}
 	json.NewEncoder(output).Encode(state)
 }
@@ -125,8 +132,9 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 		cancel()
 	}()
 	fmt.Fprintln(output, "READY")
+	state := map[string]int64{}
 	for ctx.Err() == nil {
-		refreshDesktop(ctx, c, relay, countries, output)
+		refreshDesktop(ctx, c, relay, countries, state, output)
 		select {
 		case <-ctx.Done():
 		case <-time.After(90 * time.Second):

@@ -7,6 +7,11 @@ if [[ ! -x "$engine" ]]; then
     open 'https://github.com/InterceptSuite/ProxyBridge/releases/tag/v4.1.3_Macos'
     exit 1
 fi
-echo 'Guard направит известные ИИ-домены через ваш прокси. Для защищённых клиентов действует отдельное правило. Оставьте это окно открытым. Ctrl+C отключает системные правила.'
-set -o pipefail
-./guard system-profile | "$engine" --profile - --verbose 1
+agent="$HOME/Library/LaunchAgents/local.aiexitguard.filter.plist"
+if [[ -f "$agent" ]]; then
+    ./guard filter-off
+    echo 'Автозапуск системного фильтра выключен.'
+else
+    ./guard filter-on
+    echo 'Автозапуск фильтра включён. При первом запуске подтвердите системное разрешение. Окно можно закрыть.'
+fi
