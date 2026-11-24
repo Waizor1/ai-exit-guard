@@ -57,17 +57,32 @@ func (g *relayGate) set(until time.Time) bool {
 	g.timer = time.AfterFunc(time.Until(until), func() {
 		g.mu.Lock()
 		defer g.mu.Unlock()
-		if !time.Now().Before(g.expiry) {
+		if !g.expiry.IsZero() && !time.Now().Before(g.expiry) {
 			g.closeLocked()
 		}
 	})
 	return true
 }
 
+// Called only by the desktop controller over its private pipe.
+func (g *relayGate) proxyOnly() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.timer != nil {
+		g.timer.Stop()
+		g.timer = nil
+	}
+	if g.window == nil {
+		g.window, g.cancel = context.WithCancel(context.Background())
+		g.peers = make(map[net.Conn]struct{})
+	}
+	g.expiry = time.Time{}
+}
+
 func (g *relayGate) current() context.Context {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !time.Now().Before(g.expiry) {
+	if !g.expiry.IsZero() && !time.Now().Before(g.expiry) {
 		g.closeLocked()
 	}
 	return g.window
@@ -76,7 +91,7 @@ func (g *relayGate) current() context.Context {
 func (g *relayGate) attach(window context.Context, conn net.Conn) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if window == nil || window != g.window || !time.Now().Before(g.expiry) {
+	if window == nil || window != g.window || (!g.expiry.IsZero() && !time.Now().Before(g.expiry)) {
 		return false
 	}
 	g.peers[conn] = struct{}{}

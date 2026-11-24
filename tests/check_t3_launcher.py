@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as base:
     record = stage / ".t3/userdata/server-runtime.json"
     record.parent.mkdir(parents=True)
     # Inspect argv passed to Seatbelt. This fixture does not open a connection.
-    launcher = (root / "packaging/guarded-client").read_text()
+    launcher = (root / "packaging/guarded-client").read_text().replace("/usr/bin/defaults read local.aiexitguard.menu proxyOnly",'printf "%s" "${FIXTURE_PROXY_ONLY:-0}"')
     assert launcher.count("exec /usr/bin/sandbox-exec ") == 1
     for binary in ("guarded-codex", "guarded-claude", "agy"):
         target = stage / binary
@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory() as base:
         script.write_text("#!/bin/sh\n" + {
             "guard": 'echo "$HOME/codex"',
             "record-policy": 'echo "$2"; echo "${NO_PROXY:-empty}"'
-        }.get(tool, "exit 0") + "\n")
+        }.get(tool, 'echo "native ${HTTP_PROXY:-empty}"') + "\n")
         script.chmod(0o755)
     for origin, endpoint, allowed in (
         ("http://127.0.0.1:3773", "http://127.0.0.1:3773/mcp", True),
@@ -40,5 +40,9 @@ with tempfile.TemporaryDirectory() as base:
             assert "(deny network-outbound)" in policy and 'tcp "localhost:39178"' in policy
             assert policy.count("(allow network-outbound") == (2 if allowed else 1)
             assert ('tcp "localhost:3773"' in policy) == allowed
-            assert bypass == ("127.0.0.1" if allowed else "empty")
+            assert bypass == ("127.0.0.1:3773" if allowed else "empty")
+    for name in ("guarded-codex","guarded-claude","agy"):
+        env={**os.environ,"HOME":base,"PATH":base+":"+os.environ["PATH"],
+             "HTTP_PROXY":"http://127.0.0.1:39178","FIXTURE_PROXY_ONLY":"1"}
+        assert subprocess.check_output([str(stage/name)],env=env,text=True).strip()=="native empty"
 print("PASS: all three launchers scope MCP to the registered local TCP port")

@@ -151,6 +151,7 @@ final class Monitor: NSObject, ObservableObject {
         return verdict
     }
     func explanation(for selectedHosts:[String])->String {
+        if proxy.proxyOnly && proxy.ready {return "Автоматическая блокировка выключена. Вы можете проверить IP вручную."}
         if !online {return "Подключитесь к интернету. Проверка начнётся автоматически."}
         if !directProbeAllowed && !proxy.expected.isEmpty {return "Маршрут прокси не подтверждён. Проверьте подключение в настройках Guard."}
         if !directProbeAllowed {return "Системный прокси мешает проверить подключение. Отложите вход."}
@@ -201,7 +202,7 @@ final class Monitor: NSObject, ObservableObject {
             objectWillChange.send()
             changed?()
         }
-        guard directProbeAllowed else {return}
+        guard directProbeAllowed, !proxy.proxyOnly else {return}
         let current=fresh.filter { host in
             guard let raw=rows[host]?.Checked,let time=iso.date(from:raw) else{return false}
             return (0..<Self.maxAge).contains(now.timeIntervalSince(time))
@@ -276,6 +277,13 @@ final class Monitor: NSObject, ObservableObject {
                             }
                             let highRisk = reason.verdict == .avoid
                             if highRisk {if self.proxy.plan != nil {self.proxy.setServiceLease(Self.service(r.Host),0)} else {self.proxy.setLease(0)}}
+                            // Every member of this group must have a final, fresh reading
+                            // in this generation. Slow checks for other providers are independent.
+                            if self.proxy.plan != nil, reason == .clear, r.infoFinished {
+                                let service=Self.service(r.Host)
+                                let deadline=self.serviceDeadline(group:Self.serviceHosts(service),success:true)
+                                if deadline>0 {self.proxy.setServiceLease(service,deadline)}
+                            }
                             self.changed?()
                             if self.fresh.contains(r.Host),highRisk,self.notified.insert(r.Host).inserted {
                                 self.notify(Self.label(r.Host)+" · "+reason.explanation)
@@ -549,7 +557,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     private var animating=false
     func draw(){
         let state=model.displayed(model.monitoredHosts)
-        let label="AI Exit Guard · "+state.title+(model.running ? " · идёт проверка" : "")
+        let label="AI Exit Guard · "+(model.proxy.proxyOnly && model.proxy.ready ? "Только прокси" : state.title)+(model.running ? " · идёт проверка" : "")
         if let button=item.button {
             if spinner.superview == nil {
                 button.addSubview(spinner)

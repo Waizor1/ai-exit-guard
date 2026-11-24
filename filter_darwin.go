@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,17 +19,68 @@ const bridgeTool = "/Applications/ProxyBridge.app/Contents/MacOS/ProxyBridge"
 
 func filterCommand(ctx context.Context, mode string) error {
 	if mode == "filter-run" {
-		var profile bytes.Buffer
-		if err := writeSystemProfile(&profile, "darwin"); err != nil {
+		// Reconfigure only our own ProxyBridge CLI. Changes to other preferences
+		// never interrupt it unless the actual routing mode has changed.
+		readMode := func() bool {
+			b, e := exec.CommandContext(ctx, "/usr/bin/defaults", "read", "local.aiexitguard.menu", "proxyOnly").Output()
+			return e == nil && strings.TrimSpace(string(b)) == "1"
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
 			return err
 		}
-		cmd := exec.CommandContext(ctx, bridgeTool, "--profile", "-", "--verbose", "0")
-		cmd.Stdin = &profile
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
-		cmd.WaitDelay = 5 * time.Second
-		return cmd.Run()
+		preferenceFile := filepath.Join(home, "Library", "Preferences", "local.aiexitguard.menu.plist")
+		preferenceStamp := func() time.Time {
+			if st, e := os.Stat(preferenceFile); e == nil {
+				return st.ModTime()
+			}
+			return time.Time{}
+		}
+		for ctx.Err() == nil {
+			stamp := preferenceStamp()
+			mode := readMode()
+			var profile bytes.Buffer
+			if err := writeRoutingProfile(&profile, "darwin", mode); err != nil {
+				return err
+			}
+			child, stop := context.WithCancel(ctx)
+			cmd := exec.CommandContext(child, bridgeTool, "--profile", "-", "--verbose", "0")
+			cmd.Stdin = &profile
+			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+			cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+			cmd.WaitDelay = 5 * time.Second
+			if err := cmd.Start(); err != nil {
+				stop()
+				return err
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			timer := time.NewTicker(5 * time.Second)
+		watch:
+			for {
+				select {
+				case err := <-done:
+					timer.Stop()
+					stop()
+					return err
+				case <-timer.C:
+					nextStamp := preferenceStamp()
+					if nextStamp.Equal(stamp) {
+						continue
+					}
+					stamp = nextStamp
+					if readMode() != mode {
+						break watch
+					}
+				case <-ctx.Done():
+					break watch
+				}
+			}
+			timer.Stop()
+			stop()
+			<-done
+		}
+		return ctx.Err()
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

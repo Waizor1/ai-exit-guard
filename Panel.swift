@@ -74,8 +74,8 @@ struct GuardPanel: View {
                 VStack(alignment:.leading,spacing:9){
                     Label(model.selectedService ?? "Доступ к ИИ",systemImage:verdict.symbol)
                         .font(.subheadline.weight(.semibold)).foregroundStyle(Color(nsColor:verdict.color))
-                    Text(verdict.title).font(.system(size:25,weight:.bold))
-                    Text(model.explanation(for:selectedHosts)).font(.body).fixedSize(horizontal:false,vertical:true)
+                    Text(model.proxy.proxyOnly && model.proxy.ready ? "Только прокси" : verdict.title).font(.system(size:25,weight:.bold))
+                    Text(model.proxy.proxyOnly && model.proxy.ready ? "Запросы идут через выбранный прокси. Оценка IP носит справочный характер." : model.explanation(for:selectedHosts)).font(.body).fixedSize(horizontal:false,vertical:true)
                 }.padding(16).frame(maxWidth:.infinity,alignment:.leading)
                  .background(Color(nsColor:verdict.color).opacity(0.10),in:RoundedRectangle(cornerRadius:14))
                 if let service=model.selectedService {
@@ -113,6 +113,10 @@ struct GuardPanel: View {
                 if model.selectedService == nil {
                     VStack(spacing:8) {
                         MainProxyCard(monitor:model,proxy:model.proxy)
+                        if model.proxy.ready {
+                            Toggle("Блокировать по оценке IP",isOn:Binding(get:{!model.proxy.proxyOnly},set:{model.proxy.setProxyOnly(!$0)}))
+                                .toggleStyle(.switch).padding(.horizontal,12)
+                        }
                         KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)
                     }
                     if model.guardOnly && !model.proxy.expected.isEmpty {
@@ -141,7 +145,7 @@ struct GuardPanel: View {
         HStack {Text(label);Spacer();status(model.displayed([host]))}
     }
     func status(_ state:Recommendation)->some View {
-        Label(state == .clear ? "Низкий риск" : state == .avoid ? "Не входить" : "Повремените",systemImage:state.symbol)
+        Label(model.proxy.proxyOnly && model.proxy.ready ? "Через прокси" : state == .clear ? "Низкий риск" : state == .avoid ? "Не входить" : "Повремените",systemImage:state.symbol)
             .font(.caption.weight(.semibold)).foregroundStyle(Color(nsColor:state.color))
     }
     func serviceRow(_ name:String,_ symbol:String,_ tint:Color)->some View {

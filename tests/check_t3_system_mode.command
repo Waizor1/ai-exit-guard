@@ -24,6 +24,31 @@ if sys.argv[1:]:
         sys.exit("Необязательный параметр: --ssh имя_из_конфига_SSH")
     alias = sys.argv[2]
 
+# Exercise only name resolution for the live providers; never stop a live route.
+import socket
+import urllib.parse
+expected_ingress = "127.0.0.2"
+for host in ("api.anthropic.com","api.openai.com","daily-cloudcode-pa.googleapis.com"):
+    addresses={i[4][0] for i in socket.getaddrinfo(host,443,type=socket.SOCK_STREAM)}
+    if not addresses or addresses != {expected_ingress}:
+        sys.exit("Маршрут через системный DNS не подтверждён для "+host)
+runtime = pathlib.Path.home()/".t3/userdata/server-runtime.json"
+origin = urllib.parse.urlsplit(json.loads(runtime.read_bytes())["origin"])
+if origin.scheme!="http" or origin.hostname!="127.0.0.1" or not origin.port:
+    sys.exit("Не удалось подтвердить локальный мост T3.")
+try:
+    with socket.create_connection((origin.hostname, origin.port),timeout=3):
+        pass
+except OSError:
+    sys.exit("Локальный порт T3 недоступен в этой среде.")
+with tempfile.TemporaryDirectory() as local:
+    with socket.socket(socket.AF_UNIX) as listener, socket.socket(socket.AF_UNIX) as client:
+        address=str(pathlib.Path(local)/"sock")
+        listener.bind(address);listener.listen(1);client.settimeout(2);client.connect(address)
+        connection,_=listener.accept()
+        connection.close()
+print("Системный DNS трёх сервисов, локальный порт T3 и Unix-сокет проверены.",flush=True)
+
 with tempfile.TemporaryDirectory(prefix="guard-t3-check-") as tmp:
     base = pathlib.Path(tmp)
     neutral = base / "network-control"

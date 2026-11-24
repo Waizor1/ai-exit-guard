@@ -121,7 +121,16 @@ final class ProxyClient:ObservableObject {
     @Published var profileMessage=""
     var profileChanged:((String)->Void)?
     func expectedIP(_ service:String)->String {plan?.Profiles[service]?.Expected ?? expected}
+    @Published private(set) var proxyOnly=false
+    func setProxyOnly(_ enabled:Bool) {
+        guard ready, plan != nil, command(enabled ? "mode proxy-only":"mode guarded",expect:"READY") else{return}
+        proxyOnly=enabled
+        leases.removeAll();allowedUntil=0
+        UserDefaults.standard.set(enabled,forKey:"proxyOnly")
+        routeChanged?()
+    }
     func isOpen(_ service:String,at now:Date=Date())->Bool {
+        if proxyOnly {return ready}
         guard plan != nil else{return allowsTraffic(at:now)}
         return ready && Double(leases[service] ?? 0)>now.timeIntervalSince1970
     }
@@ -146,7 +155,7 @@ final class ProxyClient:ObservableObject {
     }
     @Published private(set) var allowedUntil: Int64 = 0
     func allowsTraffic(at date:Date = Date()) -> Bool {
-        ready && Double(allowedUntil) > date.timeIntervalSince1970
+        ready && (proxyOnly || Double(allowedUntil) > date.timeIntervalSince1970)
     }
     private var response: FileHandle?
     private var assessmentSpec: Data?
@@ -161,6 +170,7 @@ final class ProxyClient:ObservableObject {
 
     // Wait for the relay to close its live sockets before publishing a red verdict.
     func setLease(_ deadline: Int64) {
+        guard !proxyOnly else{return}
         if plan != nil {
             guard deadline==0 else{return}
             if leases.values.contains(where:{$0 != 0}) { _ = command("0", expect:"CLOSED") }
@@ -197,6 +207,7 @@ final class ProxyClient:ObservableObject {
         }
     }
     func setServiceLease(_ service:String,_ deadline:Int64){
+        guard !proxyOnly else{return}
         guard (leases[service] ?? 0) != deadline else{return}
         if command(service+" "+String(deadline),expect:deadline>0 ? "OPEN":"CLOSED"){
             leases[service]=deadline;allowedUntil=leases.values.max() ?? 0
@@ -268,6 +279,11 @@ final class ProxyClient:ObservableObject {
         let (p,input,output)=try start("proxy-serve",data)
         guard String(data:output.fileHandleForReading.availableData,encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines)=="READY" else {throw ProxyIssue("Не удалось запустить локальный прокси. Возможно, порт уже занят.")}
         lifetime=input;response=output.fileHandleForReading;assessmentSpec=data;allowedUntil=0;server=p;started=true
+        proxyOnly=false
+        if plan != nil && UserDefaults.standard.bool(forKey:"proxyOnly") {
+            guard command("mode proxy-only",expect:"READY") else {stop();throw ProxyIssue("Режим прокси не подтверждён.")}
+            proxyOnly=true
+        }
         p.terminationHandler={ [weak self] proc in DispatchQueue.main.async {
             guard let self=self,self.server===proc else{return}
             self.allowedUntil=0;self.leases.removeAll();self.assessmentSpec=nil;self.clearActivityFolder();self.ready=false;self.message="Прокси остановлен. Переподключите его.";self.routeChanged?()

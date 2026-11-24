@@ -70,6 +70,25 @@ func TestMCPRoutes(t *testing.T) {
 	send("POST", "http://127.0.0.1:3773/mcp", 403)
 }
 
+func TestMCPDiscoveryRecovers(t *testing.T) {
+	const name = "mcp.example.org"
+	calls := 0
+	m := mcpRoutes{refresh: func(context.Context) (*mcpRoutes, bool) {
+		calls++
+		if calls == 1 {
+			return nil, false
+		}
+		return &mcpRoutes{remote: map[string]bool{name: true}}, true
+	}}
+	if m.registered(context.Background(), name, true) || m.registered(context.Background(), name, true) || calls != 1 {
+		t.Fatal("initial failure opened access or retried too early")
+	}
+	m.nextRefresh = time.Time{}
+	if !m.registered(context.Background(), name, true) || calls != 2 || m.registered(context.Background(), "unknown.example", true) {
+		t.Fatal("registration recovery")
+	}
+}
+
 type rpcHijacker struct {
 	*httptest.ResponseRecorder
 	conn net.Conn

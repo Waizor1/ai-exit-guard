@@ -31,6 +31,10 @@ func t3MCPPort(file string) string {
 // Both platform engines use first-match rules. The relay makes the final
 // destination and lease decision and never falls back to a direct dial.
 func writeSystemProfile(w io.Writer, platform string) error {
+	return writeRoutingProfile(w, platform, false)
+}
+
+func writeRoutingProfile(w io.Writer, platform string, proxyOnly bool) error {
 	if platform != "windows" && platform != "darwin" {
 		return fmt.Errorf("unsupported platform")
 	}
@@ -61,7 +65,16 @@ func writeSystemProfile(w io.Writer, platform string) error {
 	if windows {
 		clients = []string{"claude.exe", "codex.exe", "antigravity.exe", "language_server_windows_x64.exe", "language_server_windows_arm64.exe"}
 	}
+	if proxyOnly && !windows {
+		clients = append(clients, "agy")
+	}
 	for _, client := range clients {
+		if proxyOnly {
+			for _, h := range explicitGoogleHosts {
+				add("AI Google HTTPS", client, "TCP", h, "443", "PROXY")
+			}
+			continue
+		}
 		add("Local Guard", client, "TCP", "127.0.0.1", "39178", "DIRECT")
 		if !windows && t3Port != "" {
 			add("Local T3 MCP", client, "TCP", "127.0.0.1", t3Port, "DIRECT")
@@ -75,7 +88,9 @@ func writeSystemProfile(w io.Writer, platform string) error {
 		// Use separate rules: adapters limit the size of each match field.
 		for _, name := range []string{domain, "*." + domain} {
 			add("AI HTTPS", "*", "TCP", name, "443", "PROXY")
-			add("AI other TCP", "*", "TCP", name, "*", "BLOCK")
+			if !proxyOnly {
+				add("AI other TCP", "*", "TCP", name, "*", "BLOCK")
+			}
 			// The macOS engine cannot match a UDP destination. A catch-all
 			// UDP rule here would break unrelated apps.
 			if windows {

@@ -12,6 +12,14 @@ case "$name" in
   *) exit 64;;
 esac
 [[ -x "$client" ]] || exit 69
+# In proxy-only mode the macOS domain profile handles AI destinations.
+# Do not install process-wide proxy variables in development tools.
+if [[ "$(/usr/bin/defaults read local.aiexitguard.menu proxyOnly 2>/dev/null || true)" == 1 ]]; then
+  for key in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy; do
+    if [[ "${(P)key:-}" == "http://127.0.0.1:39178" ]]; then unset "$key"; fi
+  done
+  exec "$client" "$@"
+fi
 export HTTP_PROXY=http://127.0.0.1:39178 HTTPS_PROXY=http://127.0.0.1:39178
 export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
 unset ALL_PROXY all_proxy NO_PROXY no_proxy
@@ -22,7 +30,7 @@ origin=$(/usr/bin/plutil -extract origin raw -o - "$HOME/.t3/userdata/server-run
 if [[ "$origin" =~ '^http://127[.]0[.]0[.]1:([1-9][0-9]{0,4})$' ]]; then
   port=$match[1]
   if [[ "${T3_ACP_MCP_ENDPOINT:-}" == "$origin/mcp" ]] && (( port > 1023 && port < 65536 && port != 39178 )); then
-    export NO_PROXY=127.0.0.1 no_proxy=127.0.0.1
+    export NO_PROXY="127.0.0.1:$port" no_proxy="127.0.0.1:$port"
     policy+="(allow network-outbound (remote tcp \"localhost:$port\"))"
   fi
 fi

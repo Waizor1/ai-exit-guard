@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,9 @@ type mcpRoutes struct {
 	local       map[string]bool
 	remote      map[string]bool
 	runtimeFile string
+	mu          sync.Mutex
+	refresh     func(context.Context) (*mcpRoutes, bool)
+	nextRefresh time.Time
 }
 
 func localRPC(u *url.URL) bool {
@@ -54,13 +58,19 @@ func loadMCP(ctx context.Context) *mcpRoutes {
 		return nil
 	}
 	m := &mcpRoutes{local: map[string]bool{}, remote: map[string]bool{}, runtimeFile: filepath.Join(home, ".t3", "userdata", "server-runtime.json")}
+	m.refresh = func(ctx context.Context) (*mcpRoutes, bool) { return readMCPRegistry(ctx, home) }
+	return m
+}
+
+func readMCPRegistry(ctx context.Context, home string) (*mcpRoutes, bool) {
+	m := &mcpRoutes{local: map[string]bool{}, remote: map[string]bool{}}
 	// Read the CLI's effective registration format. Discard credentials and
 	// command definitions. This runs only in the unprivileged desktop relay.
 	for _, bin := range []string{filepath.Join(home, ".local/bin/codex"), "/opt/homebrew/bin/codex", "/usr/local/bin/codex"} {
 		if st, e := os.Stat(bin); e != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 {
 			continue
 		}
-		bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
+		bounded, cancel := context.WithTimeout(ctx, 6*time.Second)
 		cmd := exec.CommandContext(bounded, bin, "mcp", "list", "--json")
 		cmd.Dir = home
 		data, err := cmd.Output()
@@ -75,17 +85,38 @@ func loadMCP(ctx context.Context) *mcpRoutes {
 					m.register(s.Transport.URL)
 				}
 			}
-			break
+			return m, true
 		}
 	}
-	return m
+	return nil, false
 }
 
-func (m *mcpRoutes) localAllowed(u *url.URL) bool {
+// Load after READY so a slow Codex startup cannot hold up the model relay.
+// Retry discovery after a failure. Discard stale entries if it fails.
+func (m *mcpRoutes) registered(ctx context.Context, key string, remote bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.refresh != nil && !time.Now().Before(m.nextRefresh) {
+		found, ok := m.refresh(ctx)
+		if ok {
+			m.local, m.remote = found.local, found.remote
+			m.nextRefresh = time.Now().Add(time.Minute)
+		} else {
+			m.local, m.remote = nil, nil
+			m.nextRefresh = time.Now().Add(5 * time.Second)
+		}
+	}
+	if remote {
+		return m.remote[key]
+	}
+	return m.local[key]
+}
+
+func (m *mcpRoutes) localAllowed(ctx context.Context, u *url.URL) bool {
 	if !localRPC(u) {
 		return false
 	}
-	if m.local[u.String()] {
+	if m.registered(ctx, u.String(), false) {
 		return true
 	}
 	if u.Path != "/mcp" || m.runtimeFile == "" {
@@ -105,7 +136,7 @@ func (m *mcpRoutes) serve(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if r.Method == http.MethodConnect {
 		host, port, e := net.SplitHostPort(r.Host)
-		if e != nil || port != "443" || !m.remote[strings.ToLower(host)] || aiHost(host) {
+		if e != nil || port != "443" || !m.registered(r.Context(), strings.ToLower(host), true) || aiHost(host) {
 			return false
 		}
 		serveMCPTLS(w, r, strings.ToLower(host), dialPublicMCP)
@@ -114,7 +145,7 @@ func (m *mcpRoutes) serve(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != "GET" && r.Method != "POST" && r.Method != "DELETE" {
 		return false
 	}
-	if !r.URL.IsAbs() || r.Host != r.URL.Host || !m.localAllowed(r.URL) || r.Header.Get("Origin") != "" || r.Header.Get("Upgrade") != "" {
+	if !r.URL.IsAbs() || r.Host != r.URL.Host || !m.localAllowed(r.Context(), r.URL) || r.Header.Get("Origin") != "" || r.Header.Get("Upgrade") != "" {
 		return false
 	}
 	proxy := httputil.ReverseProxy{Transport: localRPCTransport, Rewrite: func(p *httputil.ProxyRequest) {

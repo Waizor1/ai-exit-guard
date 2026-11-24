@@ -69,10 +69,11 @@ func serviceForHost(host string) string {
 }
 
 type serviceRelay struct {
-	mu       sync.RWMutex
-	routes   map[string]proxySpec
-	activity *liveFlows
-	mcp      *mcpRoutes
+	mu        sync.RWMutex
+	routes    map[string]proxySpec
+	activity  *liveFlows
+	mcp       *mcpRoutes
+	proxyOnly bool
 }
 
 func (r *serviceRelay) configure(p proxyPlan) {
@@ -91,6 +92,9 @@ func (r *serviceRelay) configure(p proxyPlan) {
 			old.gate.set(time.Time{})
 		}
 		ep.gate = &relayGate{}
+		if r.proxyOnly {
+			ep.gate.proxyOnly()
+		}
 		ep.flows = r.activity
 		r.routes[name] = ep
 	}
@@ -121,6 +125,19 @@ func (r *serviceRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	s.ServeHTTP(w, req)
 }
 func (r *serviceRelay) control(line string) string {
+	if line == "mode proxy-only" || line == "mode guarded" {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.proxyOnly = line == "mode proxy-only"
+		for _, route := range r.routes {
+			if r.proxyOnly {
+				route.gate.proxyOnly()
+			} else {
+				route.gate.set(time.Time{})
+			}
+		}
+		return "READY"
+	}
 	verb, arg, _ := strings.Cut(line, " ")
 	if verb == "config" {
 		var next proxyPlan
