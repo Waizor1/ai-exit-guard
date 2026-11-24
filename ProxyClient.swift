@@ -324,6 +324,7 @@ final class ProxyClient:ObservableObject {
 
 struct ProxyEditor: View {
     @ObservedObject var proxy:ProxyClient
+    var guardOnly:Bool
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             Text("Прокси для ИИ").font(.title2.bold())
@@ -341,10 +342,14 @@ struct ProxyEditor: View {
                 Text("macOS запросит разрешение на настройку сети. Пароль хранится в Связке ключей.").font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("Выбранный выход   "+proxy.expected).textSelection(.enabled)
-                Text("Запуск через Guard").font(.headline)
-                Text("Для терминала запустите новую сессию здесь. Открытая сессия сохраняет прежние настройки.").font(.callout)
-                HStack{Button("Claude"){proxy.openService("Claude")};Button("ChatGPT"){proxy.openService("ChatGPT")}}.disabled(!proxy.ready)
-                HStack{Button("Claude Code"){terminal("claude")};Button("Codex"){terminal("codex")}}.disabled(!proxy.ready)
+                if guardOnly {Button("Настроить для Happ"){proxy.applyTunnelRoute(force:true)}}
+                DisclosureGroup("Открыть приложение через Guard") {
+                    VStack(alignment:.leading,spacing:8) {
+                        Text("Для терминала запустите новую сессию здесь. Открытая сессия сохраняет прежние настройки.").font(.callout)
+                        HStack{Button("Claude"){proxy.openService("Claude")};Button("ChatGPT"){proxy.openService("ChatGPT")}}.disabled(!proxy.ready)
+                        HStack{Button("Claude Code"){terminal("claude")};Button("Codex"){terminal("codex")}}.disabled(!proxy.ready)
+                    }.padding(.top,6)
+                }
                 Button("Отключить прокси",action:proxy.disconnect)
             }
             if proxy.busy {ProgressView().controlSize(.small)}

@@ -50,6 +50,7 @@ final class Monitor: NSObject, ObservableObject {
     @Published var showHistory = false
     let proxy=ProxyClient()
     let killSwitch=KillSwitch()
+    @Published var t3RuntimeMessage="Проверяем запуск…"
     @Published var proxySettings=false
     @Published var showConnections=false
     @Published var connectionHeight:CGFloat=300
@@ -343,6 +344,14 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     var display: NSScreen?
 
     func applicationDidFinishLaunching(_ n:Notification) {
+        // Repair only the previous Guard-managed Antigravity path on upgrade.
+        if let helper=Bundle.main.url(forResource:"guard",withExtension:nil) {
+            let migration=Process()
+            migration.executableURL=helper
+            migration.arguments=["t3-migrate"]
+            migration.standardOutput=FileHandle.nullDevice
+            try? migration.run()
+        }
         NSApp.setActivationPolicy(.accessory)
         model.proxy.routeChanged={ [weak self] in self?.recheck() }
         model.proxy.profileChanged={ [weak self] _ in

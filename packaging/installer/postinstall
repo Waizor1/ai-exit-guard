@@ -6,7 +6,13 @@ for service in local.aiexitguard.ingress local.aiexitguard.rules; do
 if /bin/launchctl print "system/$service" >/dev/null 2>&1; then
     /bin/launchctl bootout "system/$service"
 fi
-/bin/launchctl bootstrap system "/Library/LaunchDaemons/$service.plist"
+# bootout can return before launchd releases the old job on upgrade.
+attempt=0
+until /bin/launchctl bootstrap system "/Library/LaunchDaemons/$service.plist"; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 12 ] || exit 1
+    /bin/sleep 1
+done
 done
 /Library/PrivilegedHelperTools/local.aiexitguard.rules --upgrade-hosts
 /usr/bin/dscacheutil -flushcache

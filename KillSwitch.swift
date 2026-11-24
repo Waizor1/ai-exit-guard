@@ -68,15 +68,15 @@ struct KillSwitchCard:View {
         switch lock.state {
         case .on:
             if !lock.verified && !lock.checking {return "Система вернула внешний адрес. Пока отложите вход."}
-            return "Прямой выход к основным адресам ИИ через системный DNS закрыт. Приложения со своим DNS требуют отдельной защиты."
-        case .off:return "Приложения могут выйти напрямую. Внутри прокси Guard красная оценка закрывает соединения."
+            return "Защищены основные адреса ИИ в системном DNS."
+        case .off:return "Приложения могут подключаться к ИИ напрямую."
         case .conflict,.unknown:return "Guard не смог подтвердить системное правило."
         }
     }
     var body:some View {
         VStack(alignment:.leading,spacing:5) {
             HStack {
-                Label("Килл-свитч",systemImage:"shield.lefthalf.filled").font(.headline)
+                Label("Защита от обхода",systemImage:"shield.lefthalf.filled").font(.headline)
                 Spacer()
                 Text(title).font(.caption.weight(.semibold))
                 Toggle("Запретить прямой выход к ИИ",isOn:Binding(get:{lock.state == .on},set:lock.set))

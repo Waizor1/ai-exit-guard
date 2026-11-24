@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-func configureT3(path, bin string) error {
+func configureT3(path, bin string, migrateOnly bool) error {
 	st, err := os.Lstat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return errors.New("файл настроек T3 недоступен")
@@ -41,7 +41,15 @@ func configureT3(path, bin string) error {
 			}
 			cfg = map[string]any{}
 		}
-		launcher := filepath.Join(bin, "guarded-"+client)
+		previous := filepath.Join(bin, "guarded-"+client)
+		if migrateOnly && (client != "antigravity" || cfg["binaryPath"] != previous) {
+			continue
+		}
+		launcher := previous
+		// T3 accepts external Antigravity launchers only under a recognized CLI name.
+		if client == "antigravity" {
+			launcher = filepath.Join(bin, "agy")
+		}
 		info, err := os.Stat(launcher)
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
 			return fmt.Errorf("нет программы запуска %s", client)
@@ -49,7 +57,7 @@ func configureT3(path, bin string) error {
 		if cfg["binaryPath"] == launcher {
 			continue
 		}
-		if cfg["binaryPath"] != nil && cfg["binaryPath"] != "" {
+		if cfg["binaryPath"] != nil && cfg["binaryPath"] != "" && cfg["binaryPath"] != previous {
 			return fmt.Errorf("у %s уже задан другой путь. Сохраните его и выберите Guard в настройках T3", client)
 		}
 		cfg["binaryPath"] = launcher

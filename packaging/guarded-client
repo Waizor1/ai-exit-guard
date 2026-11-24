@@ -2,12 +2,8 @@
 set -eu
 name="$0:t"
 case "$name" in
-  guarded-antigravity)
-    case "$(/usr/bin/uname -m)" in arm64) arch=arm64;; x86_64) arch=x64;; *) exit 69;; esac
-    base="$HOME/.t3/tools/antigravity-acp/darwin-$arch"
-    release=$(/usr/bin/plutil -extract releaseId raw -o - "$base/active.json")
-    [[ "$release" =~ '^[a-fA-F0-9]{64}$' ]] || exit 69
-    client="$base/versions/$release/antigravity"
+  agy|guarded-antigravity)
+    client=$("${0:A:h}/guard" t3-runtime)
     ;;
   guarded-codex|guarded-claude)
     export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"

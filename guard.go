@@ -465,13 +465,22 @@ func main() {
 			return
 		}
 	}
-	if len(os.Args) == 2 && os.Args[1] == "t3-protect" && runtime.GOOS == "darwin" {
+	if len(os.Args) == 2 && os.Args[1] == "t3-runtime" && runtime.GOOS == "darwin" {
+		path, err := checkedAntigravity(ctx)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Guard:", err)
+			os.Exit(1)
+		}
+		fmt.Println(path)
+		return
+	}
+	if len(os.Args) == 2 && (os.Args[1] == "t3-protect" || os.Args[1] == "t3-migrate") && runtime.GOOS == "darwin" {
 		home, homeErr := os.UserHomeDir()
 		exe, exeErr := os.Executable()
 		if homeErr != nil || exeErr != nil {
 			os.Exit(1)
 		}
-		if err := configureT3(filepath.Join(home, ".t3", "userdata", "settings.json"), filepath.Dir(exe)); err != nil {
+		if err := configureT3(filepath.Join(home, ".t3", "userdata", "settings.json"), filepath.Dir(exe), os.Args[1] == "t3-migrate"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
