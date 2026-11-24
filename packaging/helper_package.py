@@ -26,6 +26,8 @@ if sys.argv[2:] == ['--developer-id']:
                    'and certificate 1[field.1.2.840.113635.100.6.2.6] exists '
                    'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
                    f'and certificate leaf[subject.OU] = "{team[1]}"')
+elif len(sys.argv) == 4 and sys.argv[2] == '--local-cert' and re.fullmatch(r'[a-fA-F0-9]{40}', sys.argv[3]):
+    requirement = f'identifier "local.aiexitguard.menu" and certificate leaf = H"{sys.argv[3]}"'
 elif sys.argv[2:]:
     raise ValueError('Unknown signing mode')
 subprocess.run(['/usr/bin/codesign', '--verify', '--all-architectures', '-R', '=' + requirement, app], check=True)

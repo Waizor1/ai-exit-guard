@@ -2,19 +2,31 @@
 set -eu
 identity=${DEVELOPER_ID_APPLICATION:-}
 profile=${NOTARY_KEYCHAIN_PROFILE:-}
+local_sign=false
 release=false
 app_update=false
 case "${1:-}" in
+ --local-install) local_sign=true ;;
+ --local-update) local_sign=true; app_update=true ;;
  --release) release=true ;;
  --app-update) app_update=true ;;
  "") ;;
- *) echo "Usage: build.sh [--release | --app-update]" >&2; exit 2 ;;
+ *) echo "Usage: build.sh [--release | --app-update | --local-install | --local-update]" >&2; exit 2 ;;
 esac
 if $release && [[ -z "$identity" || -z "${DEVELOPER_ID_INSTALLER:-}" || -z "$profile" ]]; then
  echo "Public release requires Developer ID Application, Developer ID Installer, and a notarization profile." >&2
  exit 1
 fi
-if $app_update && [[ -z "$identity" || -z "$profile" ]]; then
+if $local_sign; then
+ identity=${GUARD_LOCAL_CERT_SHA1:-}
+ if [[ ! "$identity" =~ ^[a-fA-F0-9]{40}$ || ! -f "${GUARD_LOCAL_KEYCHAIN:-}" ]]; then
+  echo "Local signing requires GUARD_LOCAL_CERT_SHA1 and GUARD_LOCAL_KEYCHAIN." >&2
+  exit 1
+ fi
+ profile=""
+ unset DEVELOPER_ID_INSTALLER
+fi
+if $app_update && ! $local_sign && [[ -z "$identity" || -z "$profile" ]]; then
  echo "An app update requires Developer ID Application and a notarization profile." >&2
  exit 1
 fi
@@ -52,14 +64,24 @@ install -m 755 packaging/guarded-client "$res/agy"
 cp Инструкция.txt packaging/*.command "$res/"
 cp Info.plist "$app/Contents/Info.plist"
 sign=(--force --options runtime --sign "${identity:--}")
-if [[ -n "$identity" ]]; then sign+=(--timestamp); fi
+if $local_sign; then
+ sign+=(--keychain "$GUARD_LOCAL_KEYCHAIN" --timestamp=none)
+elif [[ -n "$identity" ]]; then
+ sign+=(--timestamp)
+fi
 codesign "${sign[@]}" "$daemon"
 codesign "${sign[@]}" "$app/Contents/Helpers/TraceProbe"
 codesign "${sign[@]}" "$res/guard"
-codesign "${sign[@]}" "$app"
+if $local_sign; then
+ codesign "${sign[@]}" -r "=designated => identifier \"local.aiexitguard.menu\" and certificate leaf = H\"$identity\"" "$app"
+else
+ codesign "${sign[@]}" "$app"
+fi
 codesign --verify --strict --deep "$app"
 install -m 755 "$res/guard" "$stage/root/Library/PrivilegedHelperTools/local.aiexitguard.ingress"
-if $release || $app_update; then
+if $local_sign; then
+ python3 packaging/helper_package.py "$stage/root" --local-cert "$identity"
+elif $release || $app_update; then
  python3 packaging/helper_package.py "$stage/root" --developer-id
 else
  python3 packaging/helper_package.py "$stage/root"
@@ -67,6 +89,10 @@ fi
 if $app_update; then
  archive="$stage/AI Exit Guard.zip"
  ditto -c -k --keepParent "$app" "$archive"
+ if $local_sign; then
+  mv "$archive" "dist/AI Exit Guard Local Update.zip"
+  exit 0
+ fi
  xcrun notarytool submit "$archive" --keychain-profile "$profile" --wait
  xcrun stapler staple "$app"
  xcrun stapler validate "$app"
@@ -101,7 +127,7 @@ if [[ -n "$profile" ]]; then
  spctl --assess --type install "$pkg"
 fi
 hdiutil create -quiet -format UDZO -fs HFS+ -volname 'AI Exit Guard' -srcfolder "$stage/image" "$stage/package.dmg"
-if [[ -n "$identity" ]]; then
+if [[ -n "$identity" ]] && ! $local_sign; then
  codesign --force --timestamp --sign "$identity" "$stage/package.dmg"
 fi
 if [[ -n "$profile" ]]; then
@@ -110,4 +136,8 @@ if [[ -n "$profile" ]]; then
  xcrun stapler validate "$stage/package.dmg"
 fi
 hdiutil verify "$stage/package.dmg"
-mv "$stage/package.dmg" "dist/AI Exit Guard.dmg"
+if $local_sign; then
+ mv "$stage/package.dmg" "dist/AI Exit Guard Local Install.dmg"
+else
+ mv "$stage/package.dmg" "dist/AI Exit Guard.dmg"
+fi
