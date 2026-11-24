@@ -252,7 +252,11 @@ func (c *checker) general(ip string) riskReport {
 func systemTrace(parent context.Context, address string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, 48*time.Second)
 	defer cancel()
-	probe := exec.CommandContext(ctx, "/usr/bin/curl", "--disable", "--noproxy", "*", "--fail",
+	curl := "/usr/bin/curl"
+	if runtime.GOOS == "windows" {
+		curl = filepath.Join(os.Getenv("SystemRoot"), "System32", "curl.exe")
+	}
+	probe := exec.CommandContext(ctx, curl, "--disable", "--noproxy", "*", "--fail",
 		"--silent", "--connect-timeout", "5", "--max-time", "10", "--retry", "3",
 		"--retry-all-errors", "--retry-delay", "1", "--max-filesize", "65536",
 		"--header", "Cache-Control: no-store", address+"?_="+strconv.FormatInt(time.Now().UnixNano(), 10))

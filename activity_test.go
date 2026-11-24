@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -25,7 +26,11 @@ func TestActivityCorrelatesActualTunnelAndSeparatesWorker(t *testing.T) {
 
 func TestActivitySocketTracksOnlyOpenAITunnels(t *testing.T) {
 	// macOS Unix sockets have a short path limit.
-	dir, err := os.MkdirTemp("/tmp", "aeg-test-")
+	base := "/tmp"
+	if runtime.GOOS == "windows" {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "aeg-test-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,22 @@
+#!/bin/zsh
+set -eu
+name="$0:t"
+case "$name" in
+  guarded-antigravity)
+    case "$(/usr/bin/uname -m)" in arm64) arch=arm64;; x86_64) arch=x64;; *) exit 69;; esac
+    base="$HOME/.t3/tools/antigravity-acp/darwin-$arch"
+    release=$(/usr/bin/plutil -extract releaseId raw -o - "$base/active.json")
+    [[ "$release" =~ '^[a-fA-F0-9]{64}$' ]] || exit 69
+    client="$base/versions/$release/antigravity"
+    ;;
+  guarded-codex|guarded-claude)
+    export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+    client=$(whence -p "${name#guarded-}")
+    ;;
+  *) exit 64;;
+esac
+[[ -x "$client" ]] || exit 69
+export HTTP_PROXY=http://127.0.0.1:39178 HTTPS_PROXY=http://127.0.0.1:39178
+export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
+unset ALL_PROXY all_proxy NO_PROXY no_proxy
+exec /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote tcp "localhost:39178"))' "$client" "$@"
