@@ -90,6 +90,8 @@ func get(ctx context.Context, c *http.Client, addr string) ([]byte, net.Conn, er
 	return b, conn, err
 }
 
+const probeRetryDelay = 350 * time.Millisecond
+
 var errGatewayTimeout = errors.New("HTTP 504")
 
 // Only callers performing read-only probes or opening a new tunnel may retry.
@@ -108,7 +110,7 @@ func retryNetworkOnce[T any](ctx context.Context, attempt func() (T, error)) (T,
 	if !transient || ctx.Err() != nil {
 		return value, err
 	}
-	timer := time.NewTimer(350 * time.Millisecond)
+	timer := time.NewTimer(probeRetryDelay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
@@ -490,7 +492,7 @@ func main() {
 	defer stop()
 	if len(os.Args) == 2 {
 		switch os.Args[1] {
-		case "filter-run", "filter-on", "filter-off":
+		case "filter-run", "filter-on", "filter-off", "filter-refresh", "filter-pause", "filter-resume":
 			if err := filterCommand(ctx, os.Args[1]); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
@@ -509,8 +511,14 @@ func main() {
 			return
 		}
 	}
-	if len(os.Args) == 2 && os.Args[1] == "t3-runtime" && runtime.GOOS == "darwin" {
-		path, err := checkedAntigravity(ctx)
+	if len(os.Args) == 2 && (os.Args[1] == "t3-runtime" || os.Args[1] == "t3-path") && runtime.GOOS == "darwin" {
+		var path string
+		var err error
+		if os.Args[1] == "t3-path" {
+			path, _, err = installedAntigravity()
+		} else {
+			path, err = checkedAntigravity(ctx)
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Guard:", err)
 			os.Exit(1)
@@ -524,11 +532,11 @@ func main() {
 		if homeErr != nil || exeErr != nil {
 			os.Exit(1)
 		}
-		if err := configureT3(filepath.Join(home, ".t3", "userdata", "settings.json"), filepath.Dir(exe), os.Args[1] == "t3-migrate"); err != nil {
+		if err := restoreT3Routes(filepath.Join(home, ".t3", "userdata", "settings.json"), filepath.Dir(exe)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		fmt.Println("Строгий запуск настроен для новых процессов T3. Для отключения очистите поле Binary path в настройках провайдера.")
+		fmt.Println("Настройки Guard для всего процесса удалены. Новые агенты T3 используют обычный запуск.")
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "system-profile" {

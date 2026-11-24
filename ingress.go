@@ -23,7 +23,7 @@ var mappedHosts = slices.Concat(aiDomains, []string{
 	"www.claude.ai", "api.claude.ai", "api.anthropic.com", "platform.claude.com", "console.anthropic.com", "platform.claude.ai",
 	"www.chatgpt.com", "ab.chatgpt.com", "ws.chatgpt.com", "chat.openai.com", "api.openai.com", "auth.openai.com",
 	"auth0.openai.com", "platform.openai.com", "auth.chatgpt.com", "cdn.oaistatic.com", "files.oaiusercontent.com",
-	"generativelanguage.googleapis.com",
+	geminiAPI,
 })
 
 type helloReader struct {
@@ -61,7 +61,9 @@ func forwardTLS(client net.Conn, relay string) {
 		return
 	}
 	defer peer.Close()
-	peer.SetDeadline(time.Now().Add(10 * time.Second))
+	// The local relay can retry an upstream handshake once before replying
+	// to CONNECT. Keep this socket open for both attempts.
+	peer.SetDeadline(time.Now().Add(2*(upstreamDialTimeout+upstreamHandshakeTimeout) + probeRetryDelay + 2*time.Second))
 	target := net.JoinHostPort(name, "443")
 	if _, err = fmt.Fprintf(peer, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
 		return

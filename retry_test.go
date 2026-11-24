@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+type probeTransport func(*http.Request) (*http.Response, error)
+
+func (f probeTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestDiagnosticTimeoutRetry(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string
@@ -23,7 +27,7 @@ func TestDiagnosticTimeoutRetry(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			client := &http.Client{Transport: rpcTransportFunc(func(r *http.Request) (*http.Response, error) {
+			client := &http.Client{Transport: probeTransport(func(r *http.Request) (*http.Response, error) {
 				calls++
 				if r.Method != "GET" || r.URL.Host != "ipinfo.io" || r.URL.Path != "/192.0.2.1/json" {
 					t.Fatal("changed check destination")

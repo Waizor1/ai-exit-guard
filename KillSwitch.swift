@@ -22,8 +22,15 @@ final class KillSwitch:ObservableObject {
         }
     }
     private var request = UUID()
-    func set(_ enabled:Bool) {
-        guard !busy else{return}
+    func set(_ enabled:Bool) { apply(enabled) { _ in } }
+    func apply(_ enabled:Bool, completion:@escaping(Bool)->Void) {
+        guard !busy else {completion(false);return}
+        let before=DirectRouteLock.read()
+        if before == (enabled ? .on : .off) {refresh();completion(true);return}
+        guard before == .off || before == .on else {
+            message="В hosts уже есть изменённые записи Guard."
+            completion(false);return
+        }
         busy=true;message=""
         let connectionID = UUID()
         request = connectionID
@@ -35,7 +42,9 @@ final class KillSwitch:ObservableObject {
                 connection.invalidate()
                 self.busy = false
                 self.refresh()
-                self.message = error
+                let applied = self.state == (enabled ? .on : .off)
+                self.message = applied ? "" : (error.isEmpty ? "Изменение системного маршрута не подтверждено." : error)
+                completion(applied)
             }
         }
         let missing = "Откройте установщик Guard из DMG и разрешите установку помощника."

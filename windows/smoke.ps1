@@ -25,6 +25,23 @@ if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable
             if($reader.ReadLine() -notmatch '^HTTP/1\.1 503'){throw 'An unchecked route was allowed'}
         } finally {$tcp.Dispose()}
     } finally {$p.StandardInput.Close();if(!$p.WaitForExit(10000)){$p.Kill();throw 'Relay survived controller shutdown'}}
+    # The same unreachable upstream yields 502 in proxy-only mode. A 503 would
+    # indicate a closed diagnostic gate, and 200 would indicate a direct route.
+    $p=[Diagnostics.Process]::Start($psi)
+    try {
+        $p.StandardInput.WriteLine('{"Common":{"Scheme":"http","Host":"127.0.0.1","Port":1},"Expected":"","Profiles":{},"ProxyOnly":true}')
+        $p.StandardInput.Flush()
+        $ready=$p.StandardOutput.ReadLineAsync()
+        if(!$ready.Wait(8000) -or $ready.Result -ne 'READY'){throw 'Proxy-only relay unavailable'}
+        $tcp=New-Object Net.Sockets.TcpClient('127.0.0.1',39178)
+        try{
+            $stream=$tcp.GetStream();$stream.ReadTimeout=5000
+            $request=[Text.Encoding]::ASCII.GetBytes("CONNECT api.openai.com:443 HTTP/1.1`r`nHost: api.openai.com:443`r`n`r`n")
+            $stream.Write($request,0,$request.Length)
+            $reader=New-Object IO.StreamReader($stream)
+            if($reader.ReadLine() -notmatch '^HTTP/1\.1 502'){throw 'Wrong upstream failure in proxy-only mode'}
+        }finally{$tcp.Dispose()}
+    }finally{$p.StandardInput.Close();if(!$p.WaitForExit(10000)){$p.Kill();throw 'Proxy-only relay failed to stop'}}
     # Exercise the actual OS resolver transaction on this disposable Windows host.
     $uiExe=Join-Path $dir 'AI Exit Guard.exe'
     try {

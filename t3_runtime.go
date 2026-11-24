@@ -118,24 +118,28 @@ func probeAntigravity(ctx context.Context, path, version string) error {
 	return errors.New("эта версия Antigravity не подтвердила совместимость с T3")
 }
 
-func checkedAntigravity(ctx context.Context) (string, error) {
+func installedAntigravity() (string, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	root := os.Getenv("T3CODE_HOME")
 	if root == "" {
 		root = filepath.Join(home, ".t3")
 	}
 	if !filepath.IsAbs(root) {
-		return "", errors.New("T3CODE_HOME должен быть абсолютным путём")
+		return "", "", errors.New("T3CODE_HOME должен быть абсолютным путём")
 	}
 	arch := runtime.GOARCH
 	if arch == "amd64" {
 		arch = "x64"
 	}
 	base := filepath.Join(root, "tools", "antigravity-acp", "darwin-"+arch)
-	path, version, err := activeAntigravity(base)
+	return activeAntigravity(base)
+}
+
+func checkedAntigravity(ctx context.Context) (string, error) {
+	path, version, err := installedAntigravity()
 	if err != nil {
 		return "", err
 	}

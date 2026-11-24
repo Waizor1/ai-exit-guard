@@ -22,6 +22,7 @@ type desktopConfig struct {
 	Expected                   string
 	AllowGoogleCountryMismatch bool
 	DetailedStatus             bool
+	ProxyOnly                  bool
 }
 
 func (c desktopConfig) pin(service string) string {
@@ -31,6 +32,8 @@ func (c desktopConfig) pin(service string) string {
 	return c.Expected
 }
 
+var desktopRegionReviewed = time.Unix(1795305600, 0)
+
 // Each Windows status is also the lease decision. Only a successful reading
 // has an empty reason; the UI cannot independently relax a closed route.
 type desktopRoute struct {
@@ -39,7 +42,7 @@ type desktopRoute struct {
 }
 
 func (c desktopConfig) refusal(r result, countries map[string]string, now time.Time) string {
-	reviewed := time.Unix(1795305600, 0)
+	reviewed := desktopRegionReviewed
 	service := serviceForHost(r.Host)
 	switch {
 	case now.Before(reviewed) || !now.Before(reviewed.AddDate(0, 0, 90)):
@@ -78,6 +81,27 @@ func (c desktopConfig) refusal(r result, countries map[string]string, now time.T
 	}
 }
 
+// A failed lookup is not evidence that an already approved IP changed.
+// Keep only the remainder of an existing lease. Never grant one on missing data.
+func (c desktopConfig) temporaryReading(r result, service string, countries map[string]string, now time.Time) bool {
+	reviewed := desktopRegionReviewed
+	if now.Before(reviewed) || !now.Before(reviewed.AddDate(0, 0, 90)) {
+		return false
+	}
+	if (r.IP != "" && r.IP != c.pin(service)) || (r.AssessmentIP != "" && r.AssessmentIP != c.pin(service)) {
+		return false
+	}
+	if r.Status == "red" || r.Status == "amber" || r.Status == "split" || (valid(r.Risk) && *r.Risk > 33) || (valid(r.Trust) && *r.Trust <= 200.0/3) {
+		return false
+	}
+	for _, country := range []string{r.Country, r.TraceCountry} {
+		if country != "" && !isProtectedCountry(service, country, countries) {
+			return false
+		}
+	}
+	return r.Country == "" || r.TraceCountry == "" || r.Country == r.TraceCountry || (service == "Antigravity" && c.AllowGoogleCountryMismatch)
+}
+
 func (c desktopConfig) report(output io.Writer, state map[string]desktopRoute) {
 	if c.DetailedStatus {
 		json.NewEncoder(output).Encode(state)
@@ -99,10 +123,7 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		// Some checks emit an initial measurement before reputation is available.
 		// A changed exit or a red reading must revoke the *previous* lease now.
 		reason := c.refusal(r, countries, time.Now())
-		// Google emits one complete row. Other probes send preliminary rows
-		// before IPinfo returns; missing enrichment alone is not a revocation.
-		definitive := service == "Antigravity" || r.InfoChecked || r.InfoDetail != "" || r.IP != c.pin(service) || r.Status == "red" || (valid(r.Risk) && *r.Risk > 33) || (r.AssessmentIP != "" && r.AssessmentIP != r.IP) || (r.TraceCountry != "" && !isProtectedCountry(service, r.TraceCountry, countries))
-		if definitive && reason != "" {
+		if reason != "" && !c.temporaryReading(r, service, countries, time.Now()) {
 			relay.control(service + " 0")
 			closed := desktopRoute{Reason: reason}
 			if state[service] != closed {
@@ -127,6 +148,7 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		now := time.Now()
 		until := now.Add(maxLease)
 		reason := ""
+		temporary := false
 		for _, host := range group {
 			r := rows[host]
 			checked, err := time.Parse(time.RFC3339, r.Checked)
@@ -135,12 +157,18 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 				reason = "Срок проверки истёк. Ожидаем новый результат."
 			}
 			if reason != "" {
+				temporary = c.temporaryReading(r, service, countries, now)
 				until = time.Time{}
 				break
 			}
 			if end := checked.Add(maxLease); end.Before(until) {
 				until = end
 			}
+		}
+		if temporary && state[service].Until > now.Unix() {
+			// An explicit change was already revoked in the callback above.
+			// The timer in relayGate independently enforces the original deadline.
+			continue
 		}
 		state[service] = desktopRoute{Reason: reason}
 		if relay.control(fmt.Sprintf("%s %d", service, until.Unix())) == "OPEN" {
@@ -156,7 +184,7 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 	if !sc.Scan() || json.Unmarshal(bytes.TrimPrefix(sc.Bytes(), []byte{0xef, 0xbb, 0xbf}), &c) != nil || !c.valid() {
 		return 2
 	}
-	if _, err := canonical(c.Expected); err != nil {
+	if _, err := canonical(c.Expected); err != nil && (!c.ProxyOnly || c.Expected != "") {
 		return 2
 	}
 	var countries map[string]string
@@ -188,6 +216,12 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 		}
 		cancel()
 	}()
+	if c.ProxyOnly {
+		relay.control("mode proxy-only")
+		fmt.Fprintln(output, "READY")
+		<-ctx.Done()
+		return 0
+	}
 	fmt.Fprintln(output, "READY")
 	state := map[string]desktopRoute{}
 	for ctx.Err() == nil {

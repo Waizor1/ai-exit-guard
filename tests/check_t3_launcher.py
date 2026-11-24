@@ -1,48 +1,24 @@
-"""Check the installed launcher logic with a disposable T3 runtime and no real clients."""
-import json
+"""Check legacy Guard shortcuts hand the native client its normal arguments and network."""
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory() as base:
-    stage = Path(base)
-    record = stage / ".t3/userdata/server-runtime.json"
-    record.parent.mkdir(parents=True)
-    # Inspect argv passed to Seatbelt. This fixture does not open a connection.
-    launcher = (root / "packaging/guarded-client").read_text().replace("/usr/bin/defaults read local.aiexitguard.menu proxyOnly",'printf "%s" "${FIXTURE_PROXY_ONLY:-0}"')
-    assert launcher.count("exec /usr/bin/sandbox-exec ") == 1
-    for binary in ("guarded-codex", "guarded-claude", "agy"):
-        target = stage / binary
-        target.write_text(launcher.replace("exec /usr/bin/sandbox-exec ", 'exec "$HOME/record-policy" '))
-        target.chmod(0o755)
-    for tool in ("codex", "claude", "guard", "record-policy"):
-        script = stage / tool
-        script.write_text("#!/bin/sh\n" + {
-            "guard": 'echo "$HOME/codex"',
-            "record-policy": 'echo "$2"; echo "${NO_PROXY:-empty}"'
-        }.get(tool, 'echo "native ${HTTP_PROXY:-empty}"') + "\n")
-        script.chmod(0o755)
-    for origin, endpoint, allowed in (
-        ("http://127.0.0.1:3773", "http://127.0.0.1:3773/mcp", True),
-        ("http://127.0.0.1:3774", "http://127.0.0.1:3773/mcp", False),
-        ("http://127.0.0.1:22", "http://127.0.0.1:22/mcp", False),
-        ("http://outside.test:3773", "http://outside.test:3773/mcp", False)
-    ):
-        record.write_text(json.dumps({"origin": origin}))
-        for name in ("guarded-codex", "guarded-claude", "agy"):
-            result = subprocess.check_output([str(stage / name)], text=True, env={
-                **os.environ, "HOME": base, "PATH": base + ":" + os.environ["PATH"],
-                "T3_ACP_MCP_ENDPOINT": endpoint, "NO_PROXY": "*"
-            }).splitlines()
-            policy, bypass = result
-            assert "(deny network-outbound)" in policy and 'tcp "localhost:39178"' in policy
-            assert policy.count("(allow network-outbound") == (2 if allowed else 1)
-            assert ('tcp "localhost:3773"' in policy) == allowed
-            assert bypass == ("127.0.0.1:3773" if allowed else "empty")
-    for name in ("guarded-codex","guarded-claude","agy"):
-        env={**os.environ,"HOME":base,"PATH":base+":"+os.environ["PATH"],
-             "HTTP_PROXY":"http://127.0.0.1:39178","FIXTURE_PROXY_ONLY":"1"}
-        assert subprocess.check_output([str(stage/name)],env=env,text=True).strip()=="native empty"
-print("PASS: all three launchers scope MCP to the registered local TCP port")
+with tempfile.TemporaryDirectory() as tmp:
+    base = Path(tmp)
+    for name in ("guard","codex","claude"):
+        binary = base / name
+        script = 'echo "$HOME/codex"' if name == "guard" else 'printf "%s\\n" "$1" "${HTTP_PROXY-unset}" "$HTTPS_PROXY" "$NO_PROXY"'
+        binary.write_text("#!/bin/sh\n" + script + "\n")
+        binary.chmod(0o755)
+    for name in ("guarded-codex", "guarded-claude", "agy"):
+        launch = base / name
+        shutil.copy2(root/"packaging/guarded-client",launch)
+        env = dict(os.environ, HOME=tmp, PATH=tmp+":"+os.environ["PATH"],
+                   HTTP_PROXY="http://127.0.0.1:39178", HTTPS_PROXY="http://office.example:8000",
+                   NO_PROXY="localhost,.office.example")
+        result = subprocess.check_output([str(launch),"arg with spaces"],env=env,text=True)
+        assert result.splitlines() == ["arg with spaces","unset",env["HTTPS_PROXY"],env["NO_PROXY"]], name
+print("PASS: three provider launchers preserve developer network settings and arguments")

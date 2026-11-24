@@ -50,8 +50,7 @@ final class Monitor: NSObject, ObservableObject {
     @Published var technical = false
     @Published var showHistory = false
     let proxy=ProxyClient()
-    let killSwitch=KillSwitch()
-    @Published var t3RuntimeMessage="Проверяем запуск…"
+    var killSwitch:KillSwitch { proxy.domainRoutes }
     @Published var proxySettings=false
     @Published var showConnections=false
     @Published var connectionHeight:CGFloat=300
@@ -95,18 +94,13 @@ final class Monitor: NSObject, ObservableObject {
         return !Monitor.proxyEnabled(settings)
     }
     @Published private(set) var directProbeAllowed = true
-    @Published private(set) var guardOnly = false
     private func updateProxy() {
         let allowed:Bool
-        var scoped=false
         if proxy.expected.isEmpty {allowed=proxyAllowsProbe()} else {
-            let settings=CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String:Any] ?? [:]
-            scoped = !SystemRoute.owns(settings) || !SystemRoute.compatible(settings)
             allowed=proxy.ready
             proxy.applyTunnelRoute()
         }
-        guard allowed != directProbeAllowed || scoped != guardOnly else { return }
-        guardOnly=scoped
+        guard allowed != directProbeAllowed else { return }
         directProbeAllowed = allowed
         invalidate("")
         lastAttempt = .distantPast
@@ -151,7 +145,6 @@ final class Monitor: NSObject, ObservableObject {
         return verdict
     }
     func explanation(for selectedHosts:[String])->String {
-        if proxy.proxyOnly && proxy.ready {return "Автоматическая блокировка выключена. Вы можете проверить IP вручную."}
         if !online {return "Подключитесь к интернету. Проверка начнётся автоматически."}
         if !directProbeAllowed && !proxy.expected.isEmpty {return "Маршрут прокси не подтверждён. Проверьте подключение в настройках Guard."}
         if !directProbeAllowed {return "Системный прокси мешает проверить подключение. Отложите вход."}
@@ -202,7 +195,7 @@ final class Monitor: NSObject, ObservableObject {
             objectWillChange.send()
             changed?()
         }
-        guard directProbeAllowed, !proxy.proxyOnly else {return}
+        guard directProbeAllowed else {return}
         let current=fresh.filter { host in
             guard let raw=rows[host]?.Checked,let time=iso.date(from:raw) else{return false}
             return (0..<Self.maxAge).contains(now.timeIntervalSince(time))
@@ -215,7 +208,7 @@ final class Monitor: NSObject, ObservableObject {
         if running && elapsed<0 {invalidate("Время системы изменилось.")}
         // Start earlier for pinned routes to leave room for a timeout and retry.
         let interval = proxy.expected.isEmpty ? Self.refreshInterval : 90
-        guard online, !running else {return}
+        guard online, !running, !proxy.proxyOnly else {return}
         if let retryAt, now >= retryAt {startCheck()}
         else if elapsed>=interval || elapsed<0 {check()}
     }
@@ -456,7 +449,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     var display: NSScreen?
 
     func applicationDidFinishLaunching(_ n:Notification) {
-        // Repair only the previous Guard-managed Antigravity path on upgrade.
+        // Remove only obsolete settings written by Guard. T3 owns its providers.
         if let helper=Bundle.main.url(forResource:"guard",withExtension:nil) {
             let migration=Process()
             migration.executableURL=helper
@@ -499,14 +492,14 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         }
         model.changed={ [weak self] in self?.draw() };draw()
         path.pathUpdateHandler={ [weak self] p in
-            let links=p.availableInterfaces.map{"\($0.index):\($0.name)"}.sorted().joined(separator:",")
+            let links=p.availableInterfaces.filter{p.usesInterfaceType($0.type)}.map{"\($0.index):\($0.name)"}.sorted().joined(separator:",")
             let used:[NWInterface.InterfaceType]=[.wiredEthernet,.wifi,.cellular,.other,.loopback]
             let key="\(p.status)|\(links)|\(used.filter{p.usesInterfaceType($0)})|\(p.gateways.map{String(describing:$0)}.sorted())|\(p.supportsIPv4)|\(p.supportsIPv6)"
             DispatchQueue.main.async {
                 guard let self=self,self.signature != key else{return}
                 self.signature=key;self.model.online=p.status == .satisfied
                 self.model.killSwitch.refresh()
-                self.recheck()
+                self.recheck(keepPinned:true)
             }
         }
         let timer=Timer(timeInterval:5,repeats:true){[weak self] _ in self?.model.tick()}
@@ -528,10 +521,13 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             return event
         }
     }
-    func recheck() {
+    func recheck(keepPinned:Bool=false) {
         pending?.cancel()
-        model.invalidate("")
-        guard model.online else{return}
+        // An interface update cannot authorize a new route. An already approved
+        // static proxy retains only its original lease while we verify it again.
+        let keepLease=keepPinned && model.online && model.proxy.ready && !model.proxy.expected.isEmpty
+        model.invalidate("",closeAll:!keepLease)
+        guard model.online, !model.proxy.proxyOnly else{return}
         let work=DispatchWorkItem{[weak self] in self?.model.check()}
         pending=work
         DispatchQueue.main.asyncAfter(deadline:.now()+0.7,execute:work)
@@ -554,6 +550,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         return indicator
     }()
     private var drawnState:Recommendation?
+    private var drawnProxyOnly=false
     private var animating=false
     func draw(){
         let state=model.displayed(model.monitoredHosts)
@@ -566,14 +563,16 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
                     spinner.centerYAnchor.constraint(equalTo:button.centerYAnchor),
                     spinner.widthAnchor.constraint(equalToConstant:14),spinner.heightAnchor.constraint(equalToConstant:14)])
             }
-            if drawnState != state {
-                let shield=state.trayIcon
+            let plain=model.proxy.proxyOnly && model.proxy.ready && model.online
+            if drawnState != state || drawnProxyOnly != plain {
+                let shield=plain ? (NSImage(systemSymbolName:"network",accessibilityDescription:"Только прокси") ?? state.trayIcon) : state.trayIcon
                 let image=NSImage(size:NSSize(width:38,height:18),flipped:false){_ in
                     shield.draw(at:.zero,from:.zero,operation:.sourceOver,fraction:1)
                     return true
                 }
-                image.isTemplate=false
+                image.isTemplate=plain
                 button.image=image
+                drawnProxyOnly=plain
                 drawnState=state
             }
             if animating != model.running {
@@ -625,7 +624,14 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         panel.makeKeyAndOrderFront(nil)
     }
     func applicationShouldTerminate(_ sender:NSApplication)->NSApplication.TerminateReply {
-        model.proxy.prepareForQuit() ? .terminateNow : .terminateCancel
+        if model.proxy.busy {return .terminateCancel}
+        if model.proxy.shouldReleaseDomainsOnQuit {
+            model.proxy.releaseDomainsForQuit { ok in
+                sender.reply(toApplicationShouldTerminate:ok && self.model.proxy.prepareForQuit())
+            }
+            return .terminateLater
+        }
+        return model.proxy.prepareForQuit() ? .terminateNow : .terminateCancel
     }
     func applicationWillTerminate(_ n:Notification){
         maintainMonitoring(false)

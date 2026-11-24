@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-func configureT3(path, bin string, migrateOnly bool) error {
+func restoreT3Routes(path, bin string) error {
 	st, err := os.Lstat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return errors.New("файл настроек T3 недоступен")
@@ -29,40 +29,41 @@ func configureT3(path, bin string, migrateOnly bool) error {
 		return errors.New("формат настроек T3 не распознан")
 	}
 	changed := false
+	installed := "/Applications/AI Exit Guard.app/Contents/Resources"
 	for id, client := range map[string]string{"codex": "codex", "claudeAgent": "claude", "antigravity": "antigravity"} {
-		record, ok := providers[id].(map[string]any)
+		record, _ := providers[id].(map[string]any)
+		if record == nil {
+			continue
+		}
+		cfg, _ := record["config"].(map[string]any)
+		current, _ := cfg["binaryPath"].(string)
+		name := filepath.Base(current)
+		owned := (filepath.Dir(current) == installed || filepath.Dir(current) == bin) && (name == "guarded-"+client || (id == "antigravity" && name == "agy"))
+		if owned {
+			delete(cfg, "binaryPath")
+			changed = true
+		}
+		list, ok := record["environment"].([]any)
 		if !ok {
 			continue
 		}
-		cfg, ok := record["config"].(map[string]any)
-		if !ok {
-			if record["config"] != nil {
-				return errors.New("неизвестный формат провайдера")
+		kept := make([]any, 0, len(list))
+		for _, entry := range list {
+			row, _ := entry.(map[string]any)
+			key, _ := row["name"].(string)
+			value, _ := row["value"].(string)
+			switch strings.ToUpper(key) {
+			case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY":
+				if value == "http://127.0.0.1:39178" {
+					changed = true
+					continue
+				}
 			}
-			cfg = map[string]any{}
+			kept = append(kept, entry)
 		}
-		previous := filepath.Join(bin, "guarded-"+client)
-		if migrateOnly && (client != "antigravity" || cfg["binaryPath"] != previous) {
-			continue
+		if len(kept) != len(list) {
+			record["environment"] = kept
 		}
-		launcher := previous
-		// T3 accepts external Antigravity launchers only under a recognized CLI name.
-		if client == "antigravity" {
-			launcher = filepath.Join(bin, "agy")
-		}
-		info, err := os.Stat(launcher)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-			return fmt.Errorf("нет программы запуска %s", client)
-		}
-		if cfg["binaryPath"] == launcher {
-			continue
-		}
-		if cfg["binaryPath"] != nil && cfg["binaryPath"] != "" && cfg["binaryPath"] != previous {
-			return fmt.Errorf("у %s уже задан другой путь. Сохраните его и выберите Guard в настройках T3", client)
-		}
-		cfg["binaryPath"] = launcher
-		record["config"] = cfg
-		changed = true
 	}
 	if !changed {
 		return nil

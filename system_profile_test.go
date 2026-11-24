@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,41 +51,68 @@ func TestSystemProfiles(t *testing.T) {
 	}
 }
 
-func TestT3LoopbackRule(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	folder := filepath.Join(home, ".t3", "userdata")
-	if err := os.MkdirAll(folder, 0700); err != nil {
-		t.Fatal(err)
-	}
-	for _, origin := range []string{"http://127.0.0.1:3773", "http://127.0.0.1:39178", "http://127.0.0.1:65536", "https://outside.example:3773", "http://127.0.0.1:3773/path"} {
-		raw, _ := json.Marshal(map[string]string{"origin": origin})
-		if err := os.WriteFile(filepath.Join(folder, "server-runtime.json"), raw, 0600); err != nil {
+func TestProfileOnlyMatchesServiceDomains(t *testing.T) {
+	for _, platform := range []string{"windows", "darwin"} {
+		var profile bytes.Buffer
+		if err := writeSystemProfile(&profile, platform); err != nil {
 			t.Fatal(err)
 		}
-		var b bytes.Buffer
-		if err := writeSystemProfile(&b, "darwin"); err != nil {
+		var document map[string]json.RawMessage
+		if err := json.Unmarshal(profile.Bytes(), &document); err != nil {
 			t.Fatal(err)
 		}
-		var profile struct {
-			ProxyRules []struct{ Name, TargetHosts, TargetPorts, Action, Protocol, ProcessNames string }
+		key, hostKey := "proxyRules", "targetHosts"
+		if platform == "windows" {
+			key, hostKey = "ProxyRules", "TargetDomains"
 		}
-		if err := json.Unmarshal(b.Bytes(), &profile); err != nil {
-			t.Fatal(err)
+		var rules []map[string]any
+		if err := json.Unmarshal(document[key], &rules); err != nil || len(rules) == 0 {
+			t.Fatal("missing rules", err)
 		}
-		count := 0
-		for _, r := range profile.ProxyRules {
-			if r.Name != "Local T3 MCP" {
-				continue
+		for _, rule := range rules {
+			host := strings.TrimPrefix(rule[hostKey].(string), "*.")
+			if !aiHost(host) {
+				t.Fatalf("%s captures a non-service destination: %v", platform, rule)
 			}
-			if r.TargetHosts != "127.0.0.1" || r.TargetPorts != "3773" || r.Action != "DIRECT" || r.Protocol != "TCP" || r.ProcessNames == "*" {
-				t.Fatal(r)
+		}
+		processKey := "processNames"
+		suffix := ""
+		if platform == "windows" {
+			processKey = "ProcessName"
+			suffix = ".exe"
+		}
+		captured := func(app, host string) bool {
+			for _, rule := range rules {
+				process := rule[processKey].(string)
+				if process != "*" && !strings.EqualFold(process, app+suffix) {
+					continue
+				}
+				pattern := rule[hostKey].(string)
+				if pattern == host || (strings.HasPrefix(pattern, "*.") && strings.HasSuffix(host, pattern[1:])) {
+					return true
+				}
 			}
-			count++
+			return false
 		}
-		if (origin == "http://127.0.0.1:3773" && count != 5) || (origin != "http://127.0.0.1:3773" && count != 0) {
-			t.Fatal(origin, count)
+		for _, app := range []string{"T3 Code (Beta)", "codex", "claude", "antigravity", "unknown-tool"} {
+			for _, host := range []string{"api.openai.com", "claude.ai", "daily-cloudcode-pa.googleapis.com", geminiAPI} {
+				if !captured(app, host) {
+					t.Errorf("%s %s missed %s", platform, app, host)
+				}
+			}
+			for _, host := range []string{"localhost", "127.0.0.1", "github.com", "homelab.local", "registry.npmjs.org", "models.opencode.ai", "api.openai.com.example.org"} {
+				if captured(app, host) {
+					t.Errorf("%s %s captured %s", platform, app, host)
+				}
+			}
+			for _, host := range []string{"oauth2.googleapis.com", "www.googleapis.com"} {
+				want := app == "T3 Code (Beta)" || app == "antigravity"
+				if captured(app, host) != want {
+					t.Errorf("%s %s Google account route for %s", platform, app, host)
+				}
+			}
 		}
+
 	}
 }
 
@@ -170,5 +195,25 @@ func TestAntigravityCountryException(t *testing.T) {
 	cfg.Profiles = map[string]individualProxy{"Antigravity": {Expected: "192.0.2.99"}}
 	if cfg.refusal(r, countries, now) == "" {
 		t.Fatal("common pin used for individual route")
+	}
+}
+
+func TestTransientDiagnosticCannotMaskChangedExit(t *testing.T) {
+	var countries map[string]string
+	if err := json.Unmarshal(regionData, &countries); err != nil {
+		t.Fatal(err)
+	}
+	cfg := desktopConfig{Expected: "192.0.2.10"}
+	now := time.Unix(1795305600, 0)
+	for _, r := range []result{{}, {Status: "unknown", IP: cfg.Expected}, {TraceCountry: "DE", IP: cfg.Expected}} {
+		if !cfg.temporaryReading(r, "ChatGPT", countries, now) {
+			t.Fatalf("unexpected revocation %#v", r)
+		}
+	}
+	risk := 78.0
+	for _, r := range []result{{Status: "red"}, {IP: "192.0.2.11"}, {TraceCountry: "RU"}, {Risk: &risk}, {AssessmentIP: "192.0.2.12"}, {Status: "amber"}} {
+		if cfg.temporaryReading(r, "ChatGPT", countries, now) {
+			t.Fatalf("explicit risk retained %#v", r)
+		}
 	}
 }

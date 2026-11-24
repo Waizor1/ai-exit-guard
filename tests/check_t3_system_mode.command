@@ -67,11 +67,11 @@ with tempfile.TemporaryDirectory(prefix="guard-t3-check-") as tmp:
         probe = base / name
         shutil.copy2(neutral, probe)
         result = run_probe(probe)
-        isolated = not result["Direct"]
+        parent_ok = result["Direct"]
         child_ok = result["Child"]
-        print(f"{name}: обычный HTTPS самого процесса {'ограничен' if isolated else 'доступен'}; "
+        print(f"{name}: обычный HTTPS самого процесса {'доступен' if parent_ok else 'недоступен'}; "
               f"GitHub у дочернего curl {'доступен' if child_ok else 'недоступен'}.", flush=True)
-        passed &= isolated and child_ok
+        passed &= parent_ok and child_ok
         if alias:
             passed &= result["SSH"]
             print("  SSH к выбранному серверу: " + ("доступен" if result["SSH"] else "проверка не прошла"), flush=True)
@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory(prefix="guard-t3-check-") as tmp:
     # These repository checks use disposable listeners with a counting upstream.
     # They never rotate a production IP or change a live lease.
     tests = [
-        [go,"test","-count=1","-run","^(TestServiceTunnelsAndLeases|TestIngressUsesOnlyGuard|TestMCPRoutes)$","."],
+        [go,"test","-count=1","-run","^(TestServiceTunnelsAndLeases|TestIngressUsesOnlyGuard|TestProfileOnlyMatchesServiceDomains)$","."],
         ["python3","tests/check_red_relay.py"],
     ]
     for cmd in tests:

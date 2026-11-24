@@ -3,6 +3,7 @@ import pathlib
 import plistlib
 import subprocess
 import tempfile
+import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory() as stage:
@@ -12,16 +13,34 @@ with tempfile.TemporaryDirectory() as stage:
     executable = contents / 'MacOS/StatusCheck'
     executable.parent.mkdir()
     (contents / 'Info.plist').write_bytes(plistlib.dumps({
-        'CFBundleIdentifier':'local.aiexitguard.status-test',
+        'CFBundleIdentifier':'local.aiexitguard.status-test.'+uuid.uuid4().hex,
         'CFBundleExecutable':'StatusCheck','CFBundlePackageType':'APPL'}))
     helper = resources / 'guard'
-    helper.write_text('#!/bin/sh\ncat "$(dirname "$0")/fixture"\n')
+    # The private relay pipe can acknowledge an expired positive deadline with CLOSED.
+    helper.write_text("""#!/bin/sh
+if [ "$1" = proxy-serve ]; then
+    IFS= read -r config || exit 2
+    echo $$ >> "$(dirname "$0")/relay-pids"
+    echo READY
+    while IFS= read -r line; do
+        case "$line" in "mode proxy-only"|"mode guarded") echo READY;; *" 1"|*" 0"|0) echo CLOSED;; *) echo OPEN;; esac
+    done
+elif [ "$1" = proxy-check ]; then
+    cat >/dev/null; echo 192.0.2.10
+else
+    cat "$(dirname "$0")/fixture"
+fi
+""")
     helper.chmod(0o755)
     # Exercise Quit with a memory-only vault and network preferences. Never modify the host.
     mock_proxy = pathlib.Path(stage) / 'ProxyClient.swift'
     proxy_source = (ROOT/'ProxyClient.swift').read_text()
     route_start = proxy_source.index('    static func change(enable:Bool)throws {')
     route_end = proxy_source.index('final class ProxyClient:',route_start)
+    # Never consult the console user's launch agent in the UI fixture.
+    filter_start = proxy_source.index('    private func syncFilter(connected:Bool)throws {')
+    filter_end = proxy_source.index('    private func finishRestore()', filter_start)
+    proxy_source = proxy_source[:filter_start] + '    private func syncFilter(connected:Bool)throws {}\n' + proxy_source[filter_end:]
     mock_proxy.write_text(proxy_source[:route_start] + """
     static var routeEnabled=true
     static func change(enable:Bool)throws { routeEnabled=enable }
@@ -43,7 +62,18 @@ extension ProxyClient {
     rules = (ROOT/'GuardRules.swift').read_text()
     start = rules.index('    static func read() -> State {')
     end = rules.index('    // The helper edits',start)
-    mock_rules.write_text(rules[:start]+'    static func read() -> State { .off }\n'+rules[end:])
+    mock_rules.write_text(rules[:start]+'    static var fixtureState:State = .off\n    static func read() -> State { fixtureState }\n'+rules[end:])
+    # Model the helper reply at the XPC boundary; the real hosts editor has its own test.
+    rules_client = (ROOT/'KillSwitch.swift').read_text()
+    start = rules_client.index('        let connectionID = UUID()')
+    end = rules_client.index('\n    }\n}', start)
+    mock_client = pathlib.Path(stage) / 'KillSwitch.swift'
+    mock_client.write_text(rules_client[:start] + """
+        DirectRouteLock.fixtureState = enabled ? .on : .off
+        busy=false
+        refresh()
+        completion(true)
+""" + rules_client[end:])
     entry = (ROOT / 'main.swift').read_text().split('let app=NSApplication.shared')[0]
     driver = pathlib.Path(stage) / 'main.swift'
     driver.write_text(entry + r"""
@@ -56,6 +86,7 @@ precondition(!SystemRoute.compatible(["HTTPEnable":1]))
 precondition(!SystemRoute.compatible(["ProxyAutoConfigEnable":1,"ProxyAutoConfigURLString":"https://example.com/other.pac"]))
 precondition(SystemRoute.owns(["ProxyAutoConfigEnable":1,"ProxyAutoConfigURLString":SystemRoute.pac]))
 let app=NSApplication.shared
+defer {UserDefaults.standard.removePersistentDomain(forName:Bundle.main.bundleIdentifier!)}
 let d=GuardDelegate()
 let m=d.model
 let isolated=UserDefaults(suiteName:UUID().uuidString)!
@@ -277,6 +308,24 @@ checkPinned("green");checkPinned("red")
 precondition(pinned.displayed(Monitor.hosts) == .avoid)
 pinned.online=false
 precondition(pinned.displayed(Monitor.hosts) == .caution)
+let recovered=ProxyClient()
+recovered.expected="192.0.2.55"
+let fakePlan=try! JSONEncoder().encode(ProxyPlan(Common:try! ProxyEndpoint("http://127.0.0.1:1",scheme:"http"),Profiles:[:]))
+try! recovered.relay(fakePlan)
+recovered.ready=true
+let validUntil=Int64(Date().timeIntervalSince1970)+90
+recovered.setServiceLease("Claude",validUntil)
+recovered.setServiceLease("ChatGPT",1)
+precondition(recovered.ready && recovered.isOpen("Claude") && !recovered.isOpen("ChatGPT"))
+let pidFile=Bundle.main.resourceURL!.appendingPathComponent("relay-pids")
+func fixturePIDs()->[Int32] {((try? String(contentsOf:pidFile,encoding:.utf8)) ?? "").split(separator:"\n").compactMap{Int32($0)}}
+let count=fixturePIDs().count
+Darwin.kill(fixturePIDs().last!,SIGTERM)
+waitUntil{fixturePIDs().count==count+1 && recovered.ready}
+precondition(!recovered.isOpen("Claude"))
+recovered.shutdown()
+RunLoop.main.run(until:Date().addingTimeInterval(1.3))
+precondition(!recovered.ready && fixturePIDs().count==count+1)
 let dummy=Data("fixture-secret".utf8)
 try! ProxyVault.save(dummy)
 m.proxy.expected="192.0.2.1"
@@ -288,8 +337,36 @@ precondition(ProxyClient().expected=="192.0.2.1")
 precondition(UserDefaults.standard.bool(forKey:"restoreGuardPAC"))
 m.proxy.disconnect()
 precondition(ProxyVault.read()==nil && ProxyClient().expected.isEmpty)
+// A fresh connect, ordinary quit, restore and explicit disconnect share ownership.
+let client=ProxyClient()
+client.expected=""
+let connectedDefaults=UserDefaults.standard
+connectedDefaults.removeObject(forKey:"manageModelDomains")
+connectedDefaults.removeObject(forKey:"proxyOnly")
+client.connect("http://127.0.0.1:3128","http")
+waitUntil{!client.busy}
+precondition(client.ready && client.proxyOnly && client.managesDomains && DirectRouteLock.read() == .on)
+precondition(client.shouldReleaseDomainsOnQuit)
+client.releaseDomainsForQuit{ok in precondition(ok)}
+precondition(client.prepareForQuit() && DirectRouteLock.read() == .off)
+client.shutdown()
+client.restore()
+precondition(client.ready && DirectRouteLock.read() == .on)
+client.disconnect()
+precondition(!client.ready && !client.proxyOnly && !client.managesDomains && DirectRouteLock.read() == .off)
+DirectRouteLock.fixtureState = .on
+client.connect("http://127.0.0.1:3128","http")
+waitUntil{!client.busy}
+precondition(client.ready && !client.managesDomains)
+client.disconnect()
+precondition(DirectRouteLock.read() == .on)
+DirectRouteLock.fixtureState = .conflict
+client.connect("http://127.0.0.1:3128","http")
+waitUntil{!client.busy}
+precondition(!client.ready && client.expected.isEmpty && !client.routeWarning.isEmpty && !SystemRoute.routeEnabled)
+print("PASS: fresh proxy-only connect, domain ownership, quit, restore, disconnect and conflict rollback")
 print("PASS: three tray verdicts, thresholds, mixed routes, region eligibility and expiry, split exits, address rotation, stale data, refresh, network and proxy recovery")
 """)
-    subprocess.run(['xcrun','swiftc',str(driver),str(mock_rules),str(ROOT/'KillSwitch.swift'),str(ROOT/'Panel.swift'),str(mock_proxy),str(ROOT/'RuntimePAC.swift'),str(ROOT/'Connections.swift'),
+    subprocess.run(['xcrun','swiftc',str(driver),str(mock_rules),str(mock_client),str(ROOT/'Panel.swift'),str(mock_proxy),str(ROOT/'RuntimePAC.swift'),str(ROOT/'Connections.swift'),
                     str(ROOT/'Recommendation.swift'),str(ROOT/'ExitHistory.swift'),'-o',str(executable)],check=True)
     subprocess.run([str(executable)],check=True)

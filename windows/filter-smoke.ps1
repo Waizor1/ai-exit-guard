@@ -8,17 +8,25 @@ $p=Start-Process $installer -ArgumentList '/S' -PassThru -Wait
 if($p.ExitCode){throw 'Driver installation failed'}
 $exe=Join-Path $env:ProgramFiles 'ProxyBridge\ProxyBridge_CLI.exe'
 $profile=(Resolve-Path (Join-Path $PSScriptRoot '..\dist\windows-x64\AI Exit Guard.pbprofile')).Path
+# Use a public documentation domain as a stand-in so a failed redirect can
+# never send a probe to a real AI account service from the CI runner.
+$fixture = Get-Content -Raw $profile | ConvertFrom-Json
+$rule = @($fixture.ProxyRules | Where-Object {$_.TargetDomains -eq 'openai.com' -and $_.Action -eq 'PROXY'})
+if($rule.Count -ne 1 -or ($fixture.ProxyRules | Where-Object {$_.TargetDomains -eq '*'})){throw 'Expected destination-scoped rules'}
+$rule[0].TargetDomains='example.com'
+$profile=Join-Path $stage 'fixture.pbprofile'
+[IO.File]::WriteAllText($profile,($fixture | ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
 $engine=Start-Process $exe -ArgumentList ('--profile "'+$profile+'" --verbose 1') -RedirectStandardOutput (Join-Path $stage 'engine.log') -RedirectStandardError (Join-Path $stage 'engine.err') -PassThru
 $listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,39178)
 try {
     $listener.Start()
     $protected=Join-Path $stage 'codex.exe'
     Copy-Item (Join-Path $env:WINDIR 'System32\curl.exe') $protected
-    # No credentials or AI payload. TEST-NET-1 is a reserved, unroutable origin.
+    # Only the hostname differs from the production rule.
     $arrived=$false
     for($attempt=0;$attempt -lt 12 -and !$arrived;$attempt++){
         if($engine.HasExited){throw 'System filter exited before validation'}
-        $probe=Start-Process $protected -ArgumentList '--disable --noproxy "*" -ksS --connect-timeout 2 --max-time 3 https://192.0.2.9' -PassThru -WindowStyle Hidden
+        $probe=Start-Process $protected -ArgumentList '--disable --noproxy "*" -ksS --connect-timeout 2 --max-time 3 https://example.com' -PassThru -WindowStyle Hidden
         try{
             $until=[DateTime]::UtcNow.AddSeconds(3)
             while(!$listener.Pending() -and [DateTime]::UtcNow -lt $until){Start-Sleep -Milliseconds 100}
@@ -27,44 +35,31 @@ try {
                 try {
                     $stream=$peer.GetStream();$stream.ReadTimeout=3000
                     $reader=New-Object IO.StreamReader($stream)
-                    if($reader.ReadLine() -ne 'CONNECT 192.0.2.9:443 HTTP/1.1'){throw 'Wrong CONNECT destination'}
+                    if($reader.ReadLine() -ne 'CONNECT example.com:443 HTTP/1.1'){throw 'Wrong CONNECT destination'}
                     $arrived=$true
                 } finally {$peer.Close()}
             }
         } finally {if(!$probe.WaitForExit(4500)){$probe.Kill()}}
     }
     if(!$arrived){throw 'The real protecting driver did not redirect the unconfigured client to Guard'}
-    Write-Host 'Verified Windows driver routes a protected executable to Guard'
+    & $protected --disable --noproxy '*' --silent --fail --head --max-time 10 https://github.com | Out-Null
+    if($LASTEXITCODE -or $listener.Pending()){throw 'Ordinary development traffic was intercepted'}
+    Write-Host 'Verified selective domain routing and independent GitHub access from the same program'
 } finally {$listener.Stop();if(!$engine.HasExited){$engine.Kill();$engine.WaitForExit()}}
 
-# Verify the durable per-executable switch independently of the redirector.
+# Recreate one exact legacy rule on the disposable runner, plus an unrelated
+# rule in the same group. Upgrade must remove only the old Guard rule.
 $gui=(Resolve-Path (Join-Path $PSScriptRoot '..\dist\windows-x64\AI Exit Guard.exe')).Path
-& $protected --disable --noproxy '*' --silent --fail --head --max-time 8 https://github.com | Out-Null
-if($LASTEXITCODE){throw 'Test client has no baseline direct connection'}
-# Hosted images may start with an inactive profile; the product deliberately refuses
-# to report firewall protection until all three profiles can enforce its rules.
-Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True
-Get-NetFirewallProfile | Select-Object Name,Enabled | Format-Table
-$encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($protected))
-try {
-    $enable=Start-Process $gui -ArgumentList "--client-on $encoded" -Wait -PassThru -RedirectStandardError (Join-Path $stage firewall.err)
-    if($enable.ExitCode){Get-Content (Join-Path $stage firewall.err);throw 'Persistent firewall switch failed to enable'}
-    $entries=@(Get-NetFirewallRule -Group 'AI Exit Guard' -ErrorAction Stop | Where-Object { ($_ | Get-NetFirewallApplicationFilter).Program -eq $protected })
-    & $protected --disable --noproxy '*' --silent --head --max-time 5 https://github.com | Out-Null
-    if($LASTEXITCODE -eq 0){throw 'Direct client request passed the persistent firewall'}
-    $local=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,39178)
-    $local.Start()
-    try {
-        $check=Start-Process $protected -ArgumentList '--disable --noproxy "" --proxy http://127.0.0.1:39178 --max-time 4 https://example.org' -WindowStyle Hidden -PassThru
-        $accept=$local.AcceptTcpClientAsync()
-        if(!$accept.Wait(3500)){throw 'Firewall also prevented the client from reaching Guard'}
-        $accept.Result.Close();$check.WaitForExit()
-    }finally{$local.Stop()}
-    if($entries.Count -ne 1 -or @($entries | Where-Object {$_.Enabled -ne 'True' -or $_.Action -ne 'Block' -or $_.Direction -ne 'Outbound'}).Count){throw 'Incomplete Windows firewall policy'}
-} finally {
-    $disable=Start-Process $gui -ArgumentList "--client-off $encoded" -Wait -PassThru
-    if($disable.ExitCode){throw 'Persistent firewall rollback failed'}
+$sha=[Security.Cryptography.SHA256]::Create()
+try{$digest=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($protected.ToLowerInvariant()))}finally{$sha.Dispose()}
+$legacy='AI Exit Guard '+[BitConverter]::ToString($digest).Replace('-','').Substring(0,24)+' external'
+$other='Guard QA '+[Guid]::NewGuid()
+try{
+    New-NetFirewallRule -DisplayName $legacy -Group 'AI Exit Guard' -Program $protected -Direction Outbound -Action Block -Profile Domain,Private,Public | Out-Null
+    New-NetFirewallRule -DisplayName $other -Group 'AI Exit Guard' -Program $protected -Direction Outbound -Action Allow | Out-Null
+    $remove=Start-Process $gui -ArgumentList '--remove-legacy-rules' -PassThru -Wait
+    if($remove.ExitCode -or (Get-NetFirewallRule -DisplayName $legacy -ErrorAction SilentlyContinue)){throw 'Legacy rule migration failed'}
+    if(!(Get-NetFirewallRule -DisplayName $other -ErrorAction SilentlyContinue)){throw 'Migration changed an unrelated rule'}
+}finally{
+    Get-NetFirewallRule -DisplayName $legacy,$other -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 }
-
-& $protected --disable --noproxy '*' --silent --fail --head --max-time 8 https://github.com | Out-Null
-if($LASTEXITCODE){throw 'Direct connection did not recover after removing owned rules'}

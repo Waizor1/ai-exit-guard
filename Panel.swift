@@ -7,8 +7,9 @@ struct GuardPanel: View {
     }
     private var selectedHosts:[String] {model.selectedService.map(hosts) ?? model.monitoredHosts}
     private var verdict:Recommendation {model.displayed(selectedHosts)}
+    private var proxyMode:Bool { model.proxy.proxyOnly && model.proxy.ready }
     var body:some View {
-        VStack(alignment:.leading,spacing:14) {
+        VStack(alignment:.leading,spacing:12) {
             HStack {
                 if model.permissions || model.selectedService != nil || model.proxySettings || model.showConnections {
                     Button { if model.showConnections {model.showConnections=false} else if model.proxySettings {model.proxySettings=false} else if model.showHistory {model.showHistory=false} else if model.technical {model.technical=false} else {model.permissions=false;model.selectedService=nil} } label:{
@@ -26,19 +27,15 @@ struct GuardPanel: View {
             if model.showConnections {
                 ConnectionsPanel(list:model.connections,proxy:model.proxy,height:model.connectionHeight)
             } else if model.proxySettings {
-                ProxyEditor(proxy:model.proxy,guardOnly:model.guardOnly)
+                ProxyEditor(proxy:model.proxy)
             } else if model.permissions {
                 Text("Настройки").font(.system(size:24,weight:.bold))
                 Button("Общий прокси"){model.proxySettings=true}.buttonStyle(.link)
                 setting("bell","Уведомления",model.notificationState,model.notificationState=="Разрешены" ? "Тест" : model.notificationState=="Выключены" ? "Настройки" : "Разрешить",model.notifications)
                 setting("power","Запуск при входе",model.loginState,model.loginState=="Выключен" ? "Включить" : "Настройки",model.login)
                 Button("Подключения приложений"){model.showConnections=true}.buttonStyle(.link)
-                DisclosureGroup("Дополнительно") {
-                    VStack(alignment:.leading,spacing:8) {
-                        Button("Защитить Claude, Codex и Antigravity в T3"){ NSWorkspace.shared.open(Bundle.main.resourceURL!.appendingPathComponent("T3 Protection.command")) }
-                        Button("Системные правила"){ NSWorkspace.shared.open(Bundle.main.resourceURL!.appendingPathComponent("Guard System.command")) }
-                        Button("Инструкция"){ NSWorkspace.shared.open(Bundle.main.resourceURL!.appendingPathComponent("Инструкция.txt")) }
-                    }.padding(.top,6)
+                if !model.proxy.managesDomains && model.killSwitch.state != .off {
+                    KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)
                 }
                 Divider()
                 Button("Завершить AI Exit Guard"){ NSApp.terminate(nil) }
@@ -65,19 +62,29 @@ struct GuardPanel: View {
                 }.frame(height:230)
             } else if model.technical, let service=model.selectedService {
                 Text("Технические сведения").font(.title2.bold())
-                if service == "Antigravity" { T3RuntimeStatus(model:model) }
                 ForEach(hosts(service),id:\.self){host in
                     Divider()
                     diagnostics(host,service)
                 }
             } else {
-                VStack(alignment:.leading,spacing:9){
-                    Label(model.selectedService ?? "Доступ к ИИ",systemImage:verdict.symbol)
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(Color(nsColor:verdict.color))
-                    Text(model.proxy.proxyOnly && model.proxy.ready ? "Только прокси" : verdict.title).font(.system(size:25,weight:.bold))
-                    Text(model.proxy.proxyOnly && model.proxy.ready ? "Запросы идут через выбранный прокси. Оценка IP носит справочный характер." : model.explanation(for:selectedHosts)).font(.body).fixedSize(horizontal:false,vertical:true)
-                }.padding(16).frame(maxWidth:.infinity,alignment:.leading)
-                 .background(Color(nsColor:verdict.color).opacity(0.10),in:RoundedRectangle(cornerRadius:14))
+                if proxyMode && model.selectedService == nil {
+                    VStack(alignment:.leading,spacing:6) {
+                        Label(model.online ? "Только прокси" : "Нет сети",systemImage:model.online ? "network" : "wifi.slash")
+                            .font(.title2.bold())
+                        Text(model.online ? "Адрес можно проверить вручную." : "Соединение восстановится, когда появится интернет.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(.vertical,6)
+                } else if proxyMode && model.fresh.isDisjoint(with:selectedHosts) {
+                    Text(model.selectedService ?? "Прокси").font(.title2.bold())
+                    Text(model.running ? "Проверяем адрес…" : "Адрес ещё не проверен.").foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment:.leading,spacing:6) {
+                        if let service=model.selectedService {Text(service).font(.subheadline.weight(.semibold))}
+                        Label(verdict.title,systemImage:verdict.symbol).font(.title2.bold())
+                        Text(model.explanation(for:selectedHosts)).font(.callout).fixedSize(horizontal:false,vertical:true)
+                    }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+                     .background(Color(nsColor:verdict.color).opacity(0.10),in:RoundedRectangle(cornerRadius:12))
+                }
                 if let service=model.selectedService {
                     DisclosureGroup("Прокси для "+service) {
                         ServiceProxyEditor(service:service,proxy:model.proxy).id(service).padding(.top,6)
@@ -87,8 +94,6 @@ struct GuardPanel: View {
                         if let code=model.rows[Monitor.googleHost]?.TraceCountry,!code.isEmpty {
                             LabeledContent("Страна у Google",value:Locale(identifier:"ru").localizedString(forRegionCode:code) ?? code)
                         }
-                        Button("Открыть Antigravity"){model.proxy.openAntigravity()}.disabled(!model.proxy.isOpen(service))
-                        if !model.proxy.antigravityMessage.isEmpty {Text(model.proxy.antigravityMessage).font(.caption)}
                     } else {
                     usage("В браузере",routes[0])
                     if service=="Claude" {
@@ -113,39 +118,42 @@ struct GuardPanel: View {
                 if model.selectedService == nil {
                     VStack(spacing:8) {
                         MainProxyCard(monitor:model,proxy:model.proxy)
+                        if !model.proxy.routeWarning.isEmpty {
+                            Text(model.proxy.routeWarning).font(.callout).foregroundStyle(.orange)
+                        }
                         if model.proxy.ready {
-                            Toggle("Блокировать по оценке IP",isOn:Binding(get:{!model.proxy.proxyOnly},set:{model.proxy.setProxyOnly(!$0)}))
-                                .toggleStyle(.switch).padding(.horizontal,12)
+                            HStack {
+                                Label("Килл-свитч",systemImage:"shield").font(.headline)
+                                Spacer()
+                                Text(proxyMode ? "Выключен" : "Включён").font(.caption).foregroundStyle(.secondary)
+                                Toggle("Килл-свитч",isOn:Binding(get:{!model.proxy.proxyOnly},set:{model.proxy.setProxyOnly(!$0)}))
+                                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }.padding(12).background(Color.primary.opacity(0.055),in:RoundedRectangle(cornerRadius:12))
                         }
-                        KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)
-                    }
-                    if model.guardOnly && !model.proxy.expected.isEmpty {
-                        Menu("Открыть через Guard") {
-                            Button("Claude"){model.proxy.openService("Claude")}.disabled(!model.proxy.isOpen("Claude"))
-                            Button("ChatGPT"){model.proxy.openService("ChatGPT")}.disabled(!model.proxy.isOpen("ChatGPT"))
-                            Button("Antigravity"){model.proxy.openAntigravity()}.disabled(!model.proxy.isOpen("Antigravity"))
-                        }
-                        if !model.proxy.antigravityMessage.isEmpty { Text(model.proxy.antigravityMessage).font(.caption) }
                     }
                 }
                 Divider()
                 HStack{
                     ZStack { if model.running { ProgressView().controlSize(.small).accessibilityLabel("Идёт проверка") } }.frame(width:16,height:16)
                     VStack(alignment:.leading,spacing:2){
-                        Text(model.running ? "Обновляем последнюю оценку…" : model.fresh.compactMap{model.rows[$0]?.Checked}.max().map{"Проверено в "+String($0.dropFirst(11).prefix(5))} ?? "Ожидаем проверку").font(.caption)
+                        Text(model.running ? "Проверяем адрес…" : model.fresh.compactMap{model.rows[$0]?.Checked}.max().flatMap{ISO8601DateFormatter().date(from:$0)}.map{"Проверено в "+$0.formatted(date:.omitted,time:.shortened)} ?? "Адрес ещё не проверен").font(.caption)
                         if model.proxy.expected.isEmpty { Text("Только наблюдение").font(.caption).foregroundStyle(.secondary) }
                     }
                     Spacer()
-                    Button(action:model.check){Text("Проверить снова")}.buttonStyle(.borderedProminent).disabled(model.running || !model.online || !model.directProbeAllowed)
+                    Button(action:model.check){Text("Проверить адрес")}.buttonStyle(.borderedProminent).disabled(model.running || !model.online || !model.directProbeAllowed)
                 }
             }
         }.padding(18).frame(width:model.showConnections ? 408 : 370).fixedSize(horizontal:false,vertical:true)
     }
     func usage(_ label:String,_ host:String)->some View {
-        HStack {Text(label);Spacer();status(model.displayed([host]))}
+        HStack {
+            Text(label);Spacer()
+            if proxyMode && !model.fresh.contains(host) {Text("Нет проверки").font(.caption).foregroundStyle(.secondary)}
+            else {status(model.displayed([host]))}
+        }
     }
     func status(_ state:Recommendation)->some View {
-        Label(model.proxy.proxyOnly && model.proxy.ready ? "Через прокси" : state == .clear ? "Низкий риск" : state == .avoid ? "Не входить" : "Повремените",systemImage:state.symbol)
+        Label(state == .clear ? "Низкий риск" : state == .avoid ? "Не входить" : "Повремените",systemImage:state.symbol)
             .font(.caption.weight(.semibold)).foregroundStyle(Color(nsColor:state.color))
     }
     func serviceRow(_ name:String,_ symbol:String,_ tint:Color)->some View {
@@ -153,10 +161,13 @@ struct GuardPanel: View {
         return Button{model.selectedService=name;model.technical=false} label:{
             HStack(spacing:9){
                 Image(systemName:symbol).foregroundStyle(tint).frame(width:24)
-                Text(name).font(.body.weight(.semibold));Spacer();status(state)
+                Text(name).font(.body.weight(.semibold));Spacer()
+                if proxyMode && model.fresh.isDisjoint(with:hosts(name)) {
+                    Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси").font(.caption).foregroundStyle(.secondary)
+                } else {status(state)}
                 Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
             }.padding(.vertical,10).contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityLabel(name+" · "+state.title)
+        }.buttonStyle(.plain).accessibilityElement(children:.combine)
     }
     func setting(_ icon:String,_ title:String,_ status:String,_ action:String,_ f:@escaping()->Void)->some View{
         HStack{ Image(systemName:icon).frame(width:24); VStack(alignment:.leading){Text(title);Text(status).font(.caption).foregroundStyle(.secondary)};Spacer();Button(action,action:f) }.padding(.vertical,6)
@@ -181,36 +192,6 @@ struct GuardPanel: View {
     }
 }
 
-private struct T3RuntimeStatus: View {
-    @ObservedObject var model:Monitor
-
-    var body: some View {
-        VStack(alignment:.leading,spacing:4) {
-            Text("Antigravity в T3 Code").font(.headline)
-            Text(model.t3RuntimeMessage).font(.callout)
-        }.task {
-            model.t3RuntimeMessage="Проверяем запуск…"
-            let result = await Task.detached(priority:.utility) { () -> String in
-                guard let binary=Bundle.main.url(forResource:"guard",withExtension:nil) else {
-                    return "Откройте установщик Guard, чтобы восстановить проверку."
-                }
-                let process=Process(), errors=Pipe()
-                process.executableURL=binary
-                process.arguments=["t3-runtime"]
-                process.standardOutput=FileHandle.nullDevice
-                process.standardError=errors
-                do { try process.run() } catch { return "Не удалось начать проверку." }
-                let data=errors.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                if process.terminationStatus == 0 { return "Версия совместима с T3." }
-                let detail=String(decoding:data,as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines)
-                return detail.isEmpty ? "Не удалось проверить запуск." : detail
-            }.value
-            if !Task.isCancelled { model.t3RuntimeMessage=result }
-        }
-    }
-}
-
 private struct MainProxyCard:View {
     @ObservedObject var monitor:Monitor
     @ObservedObject var proxy:ProxyClient
@@ -218,7 +199,7 @@ private struct MainProxyCard:View {
         if proxy.busy {return ("Проверяем…",.secondary,"clock")}
         if proxy.expected.isEmpty {return ("Выключен",.secondary,"circle")}
         if !proxy.ready || !monitor.online {return ("Нет соединения",.orange,"exclamationmark.circle.fill")}
-        return ("Подключён",.green,"checkmark.circle.fill")
+        return (proxy.expected,.secondary,"arrow.up.right")
     }
     var body:some View {
         let status=state

@@ -123,3 +123,22 @@ func TestAntigravityRouting(t *testing.T) {
 		}
 	}
 }
+
+func TestPACScopesSharedGoogleToItsClient(t *testing.T) {
+	for _, path := range []string{"/guard.pac", "/antigravity.pac"} {
+		r := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+		(&serviceRelay{}).ServeHTTP(w, r)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "api.anthropic.com") && !strings.Contains(w.Body.String(), "anthropic.com") {
+			t.Fatal(path, w.Code)
+		}
+		if strings.Contains(w.Body.String(), googleHost) != (path == "/antigravity.pac") {
+			t.Fatal("Google sign-in leaked outside its app", path)
+		}
+		for _, h := range []string{"github.com", "opencode.ai", "models.opencode.ai", "registry.npmjs.org"} {
+			if strings.Contains(w.Body.String(), h) {
+				t.Fatal("non-AI tool captured", h)
+			}
+		}
+	}
+}

@@ -63,6 +63,9 @@ func TestProxyOnlyMode(t *testing.T) {
 	if !spec.gate.attach(ctx, client) {
 		t.Fatal("proxy-only session rejected")
 	}
+	for _, cmd := range []string{"Claude 0", "0", "mode proxy-only"} {
+		relay.control(cmd)
+	}
 	relay.configure(proxyPlan{})
 	if spec.gate.current() != ctx {
 		t.Fatal("unchanged route lost")
@@ -75,7 +78,7 @@ func TestProxyOnlyMode(t *testing.T) {
 
 func TestProxyOnlyProfile(t *testing.T) {
 	var b bytes.Buffer
-	if err := writeRoutingProfile(&b, "darwin", true); err != nil {
+	if err := writeSystemProfile(&b, "darwin"); err != nil {
 		t.Fatal(err)
 	}
 	var profile struct {

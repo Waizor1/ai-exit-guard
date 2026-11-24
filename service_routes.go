@@ -72,7 +72,6 @@ type serviceRelay struct {
 	mu        sync.RWMutex
 	routes    map[string]proxySpec
 	activity  *liveFlows
-	mcp       *mcpRoutes
 	proxyOnly bool
 }
 
@@ -107,8 +106,7 @@ func (r *serviceRelay) close() {
 	}
 }
 func (r *serviceRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method == "GET" && req.URL.Path == "/guard.pac" {
-		proxySpec{}.ServeHTTP(w, req)
+	if servePAC(w, req) {
 		return
 	}
 	host, _, _ := net.SplitHostPort(req.Host)
@@ -116,9 +114,6 @@ func (r *serviceRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	s, ok := r.routes[serviceForHost(host)]
 	r.mu.RUnlock()
 	if !ok {
-		if r.mcp.serve(w, req) {
-			return
-		}
 		http.Error(w, "Destination outside AI route", 403)
 		return
 	}
@@ -128,7 +123,11 @@ func (r *serviceRelay) control(line string) string {
 	if line == "mode proxy-only" || line == "mode guarded" {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		r.proxyOnly = line == "mode proxy-only"
+		enabled := line == "mode proxy-only"
+		if enabled == r.proxyOnly {
+			return "READY"
+		}
+		r.proxyOnly = enabled
 		for _, route := range r.routes {
 			if r.proxyOnly {
 				route.gate.proxyOnly()
@@ -148,15 +147,26 @@ func (r *serviceRelay) control(line string) string {
 		return "READY"
 	}
 	if verb == "0" {
-		r.close()
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.proxyOnly {
+			return "OPEN"
+		}
+		for _, s := range r.routes {
+			s.gate.set(time.Time{})
+		}
 		return "CLOSED"
 	}
 	deadline, err := strconv.ParseInt(arg, 10, 64)
 	r.mu.RLock()
+	defer r.mu.RUnlock()
 	s, ok := r.routes[verb]
-	r.mu.RUnlock()
 	if !ok || err != nil {
 		return "ERROR"
+	}
+	// Diagnostics queued before a mode change must not close a working tunnel.
+	if r.proxyOnly {
+		return "OPEN"
 	}
 	if s.gate.set(time.Unix(deadline, 0)) {
 		return "OPEN"
@@ -272,7 +282,7 @@ func collectPlan(ctx context.Context, p proxyPlan, emit func(result) error) int 
 }
 
 func servePlan(ctx context.Context, p proxyPlan, input *bufio.Scanner, ln net.Listener, activity *liveFlows) int {
-	r := &serviceRelay{activity: activity, mcp: loadMCP(ctx)}
+	r := &serviceRelay{activity: activity}
 	r.configure(p)
 	defer r.close()
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 32768}

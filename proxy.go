@@ -27,6 +27,9 @@ var localProxy = "127.0.0.1:39178"
 
 var claudeDomains = []string{"claude.ai", "claude.com", "anthropic.com", "claudeusercontent.com", "claudemcpcontent.com"}
 var openAIDomains = []string{"openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "openaimerge.com"}
+
+const geminiAPI = "generativelanguage.googleapis.com"
+
 var aiDomains = slices.Concat(claudeDomains, openAIDomains, []string{
 	"antigravity.google",
 	"antigravity.google.com",
@@ -47,7 +50,7 @@ var aiDomains = slices.Concat(claudeDomains, openAIDomains, []string{
 var explicitGoogleHosts = []string{
 	"accounts.google.com", "oauth2.googleapis.com", "www.googleapis.com", "play.googleapis.com", "auth.cloud.google",
 	"identitytoolkit.googleapis.com", "securetoken.googleapis.com", "sts.googleapis.com",
-	"generativelanguage.googleapis.com", "aiplatform.googleapis.com",
+	"aiplatform.googleapis.com",
 	"aiplatform.us.rep.googleapis.com", "aiplatform.eu.rep.googleapis.com", "aiplatform.mtls.googleapis.com",
 	"discoveryengine.googleapis.com", "us-discoveryengine.googleapis.com", "eu-discoveryengine.googleapis.com",
 	"discoveryengine.mtls.googleapis.com", "us-discoveryengine.mtls.googleapis.com", "eu-discoveryengine.mtls.googleapis.com",
@@ -66,7 +69,7 @@ func (s proxySpec) valid() bool {
 }
 func aiHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if slices.Contains(explicitGoogleHosts, host) {
+	if host == geminiAPI || slices.Contains(explicitGoogleHosts, host) {
 		return true
 	}
 	for _, domain := range aiDomains {
@@ -76,12 +79,35 @@ func aiHost(host string) bool {
 	}
 	return false
 }
-func pac() string {
+func pac() string { return applicationPAC(false) }
+
+func applicationPAC(googleClient bool) string {
 	domains, _ := json.Marshal(aiDomains)
-	return "function FindProxyForURL(url, host) { host=host.toLowerCase().replace(/\\.$/,''); var d=" + string(domains) + "; for(var i=0;i<d.length;i++) if(host===d[i] || dnsDomainIs(host,'.'+d[i])) return 'PROXY " + localProxy + "'; return 'DIRECT'; }"
+	exact := []string{geminiAPI}
+	if googleClient {
+		exact = slices.Concat(exact, explicitGoogleHosts)
+	}
+	shared, _ := json.Marshal(exact)
+	return "function FindProxyForURL(url, host) { host=host.toLowerCase().replace(/\\.$/,''); var d=" + string(domains) + ", exact=" + string(shared) + "; for(var j=0;j<exact.length;j++) if(host===exact[j]) return 'PROXY " + localProxy + "'; for(var i=0;i<d.length;i++) if(host===d[i] || dnsDomainIs(host,'.'+d[i])) return 'PROXY " + localProxy + "'; return 'DIRECT'; }"
 }
+
+func servePAC(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != "GET" || (r.URL.Path != "/guard.pac" && r.URL.Path != "/antigravity.pac") {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
+	w.Header().Set("Cache-Control", "no-store")
+	io.WriteString(w, applicationPAC(r.URL.Path == "/antigravity.pac"))
+	return true
+}
+
+const (
+	upstreamDialTimeout      = 7 * time.Second
+	upstreamHandshakeTimeout = 12 * time.Second
+)
+
 func (s proxySpec) tunnel(ctx context.Context, host string) (net.Conn, error) {
-	dial := net.Dialer{Timeout: 7 * time.Second}
+	dial := net.Dialer{Timeout: upstreamDialTimeout}
 	c, e := dial.DialContext(ctx, "tcp", s.endpoint())
 	if e != nil {
 		return nil, e
@@ -89,7 +115,7 @@ func (s proxySpec) tunnel(ctx context.Context, host string) (net.Conn, error) {
 	raw := c
 	stopClose := context.AfterFunc(ctx, func() { raw.Close() })
 	defer stopClose()
-	c.SetDeadline(time.Now().Add(12 * time.Second))
+	c.SetDeadline(time.Now().Add(upstreamHandshakeTimeout))
 	if s.Scheme == "https" {
 		secure := tls.Client(c, &tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12})
 		c = secure
@@ -189,10 +215,7 @@ func (s proxySpec) socks(c net.Conn, host string) error {
 }
 
 func (s proxySpec) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "GET" && r.URL.Path == "/guard.pac" {
-		w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
-		w.Header().Set("Cache-Control", "no-store")
-		io.WriteString(w, pac())
+	if servePAC(w, r) {
 		return
 	}
 	host, port, e := net.SplitHostPort(r.Host)

@@ -13,36 +13,25 @@ static class ClientLock {
         using(var hash=SHA256.Create())return Group+" "+BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToLowerInvariant()))).Replace("-","").Substring(0,24);
     }
     static dynamic Policy(){return Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2",true));}
-    static dynamic Owned(dynamic policy,string name,string path){
+    // Remove only unchanged process-wide rules created by older Guard releases.
+    // Group names alone are not proof of ownership.
+    public static List<string> LegacyNames(){
+        var names=new List<string>();
+        dynamic policy=Policy();
         foreach(dynamic rule in policy.Rules){
-            if(!String.Equals((string)rule.Name,name,StringComparison.Ordinal))continue;
-            if((string)rule.Grouping!=Group || !String.Equals((string)rule.ApplicationName,path,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Конфликт имён правил Windows Firewall.");
-            return rule;
+            if((string)rule.Grouping!=Group)continue;
+            string path=(string)rule.ApplicationName;
+            if(String.IsNullOrEmpty(path))continue;
+            string expected;
+            try{expected=Prefix(path)+" external";}catch(ArgumentException){continue;}
+            if(!String.Equals((string)rule.Name,expected,StringComparison.Ordinal))continue;
+            if((int)rule.Direction==2 && (int)rule.Action==0 && (int)rule.Protocol==256 &&
+               (int)rule.Profiles==7 && (string)rule.RemoteAddresses=="*")names.Add(expected);
         }
-        return null;
+        return names;
     }
-    public static bool Active(string path){
-        string prefix=Prefix(path);dynamic policy=Policy();
-        return Owned(policy,prefix+" external",path)!=null;
-    }
-    public static void Apply(string path,bool enabled){
-        string prefix=Prefix(path);dynamic policy=Policy();dynamic rules=policy.Rules;
-        if(enabled){
-            if(!File.Exists(path))throw new FileNotFoundException();
-            foreach(int profile in new[]{1,2,4})if(!policy.FirewallEnabled[profile])throw new InvalidOperationException("Включите брандмауэр Windows во всех профилях.");
-        }
-        string name=prefix+" external";
-        dynamic existing=Owned(policy,name,path);
-        if(!enabled){if(existing!=null)rules.Remove(name);return;}
-        if(existing!=null) {
-            if(!(bool)existing.Enabled || (int)existing.Direction!=2 || (int)existing.Action!=0 || (int)existing.Protocol!=256 || (int)existing.Profiles!=7 || (string)existing.RemoteAddresses!="*")
-                throw new InvalidDataException("Существующее правило брандмауэра было изменено.");
-            return;
-        }
-        // Defender treats local loopback separately for ordinary desktop apps.
-        // Block all external addresses; the signed redirector handles local port rules.
-        dynamic r=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule",true));
-        r.Name=name;r.Grouping=Group;r.ApplicationName=path;r.Direction=2;r.Action=0;
-        r.Profiles=7;r.Enabled=true;rules.Add(r);
+    public static void RemoveLegacy(){
+        dynamic policy=Policy();
+        foreach(string name in LegacyNames())policy.Rules.Remove(name);
     }
 }

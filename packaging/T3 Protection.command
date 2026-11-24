@@ -1,4 +1,4 @@
 #!/bin/zsh
 set -eu
 cd "${0:A:h}"
-exec ./guard t3-protect
+exec ./guard t3-migrate
