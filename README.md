@@ -2,7 +2,7 @@
 
 AI Exit Guard — приложение для строки меню macOS. Оно направляет Claude, ChatGPT и Google Antigravity через выбранные прокси и показывает статус каждого сервиса.
 
-**[Скачать для Mac](https://github.com/Waizor1/ai-exit-guard/releases/download/v1.14.1-beta/AI-Exit-Guard-1.14.1-beta.dmg)** · **[Скачать для Windows x64](https://github.com/Waizor1/ai-exit-guard/releases/download/v1.14.0-beta/AI-Exit-Guard-Windows-x64.zip)** · [Все выпуски](https://github.com/Waizor1/ai-exit-guard/releases)
+**[Скачать для Mac](https://github.com/Waizor1/ai-exit-guard/releases/download/v1.14.2-beta/AI-Exit-Guard-1.14.2-beta.dmg)** · **[Скачать для Windows x64](https://github.com/Waizor1/ai-exit-guard/releases/download/v1.14.0-beta/AI-Exit-Guard-Windows-x64.zip)** · [Все выпуски](https://github.com/Waizor1/ai-exit-guard/releases)
 
 Требуется macOS 13 или новее. Откройте DMG и запустите `AI Exit Guard.pkg`. Установщик запросит права администратора для системного помощника. Бета-сборка имеет локальную подпись ad hoc и не прошла нотарификацию Apple, поэтому Gatekeeper может остановить установку.
 

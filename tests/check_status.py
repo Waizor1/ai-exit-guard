@@ -61,6 +61,33 @@ func waitUntil(_ test:()->Bool){
     while !test() && Date()<deadline{RunLoop.main.run(until:Date().addingTimeInterval(0.01))}
     precondition(test())
 }
+// A nested ProxyClient update changes the SwiftUI page without publishing a Monitor update.
+if let screen=NSScreen.main {
+    d.display=screen
+    d.anchor=NSRect(x:screen.visibleFrame.midX,y:screen.visibleFrame.maxY-8,width:20,height:16)
+    d.scroll.contentView=TopAlignedClip()
+    d.scroll.documentView=d.host
+    d.panel.contentView=d.scroll
+    m.proxySettings=true
+    d.position()
+    d.panel.orderFront(nil)
+    RunLoop.main.run(until:Date().addingTimeInterval(0.35))
+    let before=d.panel.frame
+    m.proxy.expected="192.0.2.10"
+    waitUntil { abs(d.panel.frame.height-before.height)>15 }
+    precondition(abs(d.panel.frame.maxY-before.maxY)<2)
+    m.proxy.expected=""
+    waitUntil { abs(d.panel.frame.height-before.height)<2 }
+    precondition(d.scroll.contentView.bounds.origin.y==0)
+    var measures=0
+    let resize=d.host.sizeInvalidated
+    d.host.sizeInvalidated={ measures+=1;resize?() }
+    RunLoop.main.run(until:Date().addingTimeInterval(0.3))
+    precondition(measures<12, "idle panel repeatedly measured itself")
+    d.host.sizeInvalidated=resize
+    d.panel.orderOut(nil)
+    m.proxySettings=false
+}
 func fixture(_ statuses:[String],age:Double=0){
     let stamp=ISO8601DateFormatter().string(from:Date().addingTimeInterval(-age))
     var data=Data()

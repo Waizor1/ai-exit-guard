@@ -322,6 +322,37 @@ final class Monitor: NSObject, ObservableObject {
 final class MenuSpinner:NSProgressIndicator {
     override func hitTest(_ point:NSPoint)->NSView? {nil}
 }
+// SwiftUI disclosure and child view updates can change the ideal size without
+// publishing anything on Monitor. Measure after AppKit finishes that layout pass.
+final class PanelHost: NSHostingView<GuardPanel> {
+    var sizeInvalidated: (() -> Void)?
+    private var pendingMeasurement=false
+
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        scheduleMeasurement()
+    }
+
+    override func layout() {
+        super.layout()
+        scheduleMeasurement()
+    }
+
+    private func scheduleMeasurement() {
+        guard !pendingMeasurement, window?.isVisible == true else { return }
+        pendingMeasurement=true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingMeasurement=false
+            if self.window?.isVisible == true { self.sizeInvalidated?() }
+        }
+    }
+}
+
+final class TopAlignedClip: NSClipView {
+    override var isFlipped: Bool { true }
+}
+
 final class StatusPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { orderOut(sender) }
@@ -332,7 +363,11 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let panel = StatusPanel(contentRect:.zero, styleMask:[.borderless,.nonactivatingPanel], backing:.buffered, defer:false)
     let scroll = NSScrollView()
-    lazy var host = NSHostingView(rootView:GuardPanel(model:model))
+    lazy var host: PanelHost = {
+        let view=PanelHost(rootView:GuardPanel(model:model))
+        view.sizeInvalidated={ [weak self] in self?.position() }
+        return view
+    }()
     var signature: String?
     var periodic: Timer?
     var pending: DispatchWorkItem?
@@ -367,6 +402,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow=true
         panel.isOpaque=false
         panel.backgroundColor = .clear
+        scroll.contentView=TopAlignedClip()
         scroll.wantsLayer=true
         scroll.layer?.cornerRadius=15
         scroll.layer?.masksToBounds=true
@@ -475,14 +511,20 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         guard let screen=display else{return}
         host.layoutSubtreeIfNeeded()
         let size=host.fittingSize
+        guard size.width > 0, size.height > 0 else {return}
         let bounds=screen.visibleFrame.insetBy(dx:6,dy:6)
         let top=min(anchor.minY-4,bounds.maxY,screen.frame.maxY-NSStatusBar.system.thickness-4)
         let height=min(ceil(size.height),max(1,top-bounds.minY))
         let width=min(ceil(size.width),bounds.width)
         let x=min(max(bounds.minX,anchor.midX-width/2),bounds.maxX-width)
-        host.setFrameSize(NSSize(width:width,height:ceil(size.height)))
         let frame=NSRect(x:round(x),y:floor(top-height),width:width,height:height)
         if panel.frame != frame {panel.setFrame(frame,display:true)}
+        let document=NSSize(width:width,height:ceil(size.height))
+        if host.frame.size != document {host.setFrameSize(document)}
+        if height >= document.height && scroll.contentView.bounds.origin != .zero {
+            scroll.contentView.scroll(to:.zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
     }
     @objc func toggle(){
         if panel.isVisible {closePanel();return}
