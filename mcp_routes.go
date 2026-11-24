@@ -46,7 +46,7 @@ func (m *mcpRoutes) register(raw string) {
 }
 
 func loadMCP(ctx context.Context) *mcpRoutes {
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" || os.Geteuid() == 0 {
 		return nil
 	}
 	home, e := os.UserHomeDir()
