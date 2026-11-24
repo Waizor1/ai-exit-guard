@@ -190,8 +190,15 @@ final class Monitor: NSObject, ObservableObject {
         if findings.allSatisfy({$0.1 == worst.1}) {return worst.1.explanation}
         return Self.label(worst.0)+" · "+worst.1.explanation
     }
+    private var lastOpenServices=Set<String>()
     func tick(now:Date = Date()) {
         updateProxy()
+        let openServices=Set(ProxyClient.services.filter {proxy.isOpen($0,at:now)})
+        if lastOpenServices != openServices {
+            lastOpenServices=openServices
+            objectWillChange.send()
+            changed?()
+        }
         guard directProbeAllowed else {return}
         let current=fresh.filter { host in
             guard let raw=rows[host]?.Checked,let time=iso.date(from:raw) else{return false}

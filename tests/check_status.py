@@ -251,6 +251,17 @@ precondition(pinned.displayed(Monitor.hosts) == .clear)
 precondition(pinned.explanation(for:Monitor.hosts) == Finding.rechecking.explanation)
 precondition(pinned.proxy.allowedUntil == deadline)
 precondition(pinned.displayed(Monitor.hosts,now:Date(timeIntervalSince1970:Double(deadline))) == .caution)
+var leaseRedraws=0
+pinned.changed={leaseRedraws+=1}
+pinned.tick()
+precondition(leaseRedraws>0)
+leaseRedraws=0
+pinned.tick()
+precondition(leaseRedraws==0)
+pinned.proxy.fixtureLease("1.1.1.1",until:0)
+pinned.tick()
+precondition(leaseRedraws>0 && pinned.displayed(Monitor.hosts) == .caution)
+pinned.proxy.fixtureLease("1.1.1.1",until:deadline)
 checkPinned("amber");checkPinned("unknown")
 precondition(pinned.displayed(Monitor.hosts) == .caution)
 checkPinned("green");checkPinned("red")
