@@ -264,8 +264,6 @@ final class ProxyClient:ObservableObject {
         do {try activate(entry.plan,pin:entry.ip,id:entry.id)}catch{message=error.localizedDescription}
     }
     @Published var replacing=false
-    @Published var draft=""
-    @Published var scheme="socks5"
     @Published private(set) var routeWarning=""
     @Published var busy=false
     @Published var ready=false
@@ -563,7 +561,7 @@ final class ProxyClient:ObservableObject {
                         if switching {
                             guard self.ready else{throw ProxyIssue("Текущий прокси восстанавливается. Повторите переключение.")}
                             try self.switchRunning(profile,data:saved,ip:result,id:id)
-                            self.busy=false;self.replacing=false;self.draft="";self.message="Прокси переключён."
+                            self.busy=false;self.replacing=false;self.message="Прокси переключён."
                             self.profileChanged?("Common");return
                         }
                         if self.defaults.object(forKey:"proxyOnly") == nil {self.defaults.set(true,forKey:"proxyOnly")}
@@ -583,7 +581,7 @@ final class ProxyClient:ObservableObject {
                                 return
                             }
                             if !alreadyOn {self.defaults.set(true,forKey:"manageModelDomains")}
-                            self.replacing=false;self.paused=false;self.defaults.removeObject(forKey:"proxyPaused");self.draft="";self.routeWarning=""
+                            self.replacing=false;self.paused=false;self.defaults.removeObject(forKey:"proxyPaused");self.routeWarning=""
                             do {try self.syncFilter(connected:true)} catch {self.routeWarning=error.localizedDescription}
                             self.ready=self.server?.isRunning == true
                             self.message=self.ready ? "Прокси подключён." : "Восстанавливаем подключение…"
@@ -661,6 +659,116 @@ final class ProxyClient:ObservableObject {
     func shutdown(){stop()}
 }
 
+struct ProxyInput {
+    var scheme = "http"
+    var address = ""
+    var username = ""
+    var password = ""
+
+    init(_ endpoint: ProxyEndpoint? = nil) {
+        guard let endpoint else { return }
+        scheme = endpoint.Scheme
+        address = (endpoint.Host.contains(":") ? "[\(endpoint.Host)]" : endpoint.Host) + ":\(endpoint.Port)"
+        username = endpoint.User
+        password = endpoint.Password
+    }
+
+    mutating func importLine(_ line: String) throws {
+        self = try ProxyInput(ProxyEndpoint(line, scheme: scheme))
+    }
+
+    func connectionLine() throws -> String {
+        let raw = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.contains("://"), !raw.contains("@"),
+              var url = URLComponents(string: scheme + "://" + raw),
+              url.user == nil, url.password == nil else {
+            throw ProxyIssue("Введите адрес и порт или вставьте строку прокси целиком.")
+        }
+        if !username.isEmpty || !password.isEmpty { url.user = username }
+        if !password.isEmpty { url.password = password }
+        guard let line = url.string else { throw ProxyIssue("Проверьте адрес прокси.") }
+        _ = try ProxyEndpoint(line, scheme: scheme)
+        return line
+    }
+}
+
+private final class ProxyFieldsState: ObservableObject {
+    @Published var input: ProxyInput
+    @Published var showsPassword = false
+    @Published var error = ""
+    init(_ endpoint: ProxyEndpoint?) { input = ProxyInput(endpoint) }
+}
+
+struct ProxyFields: View {
+    @StateObject private var form: ProxyFieldsState
+    let actionTitle: String
+    let busy: Bool
+    let apply: (String, String) -> Void
+
+    init(endpoint: ProxyEndpoint? = nil, actionTitle: String, busy: Bool, apply: @escaping (String, String) -> Void) {
+        _form = StateObject(wrappedValue: ProxyFieldsState(endpoint))
+        self.actionTitle = actionTitle
+        self.busy = busy
+        self.apply = apply
+    }
+
+    private func paste(_ line: String) {
+        do {
+            try form.input.importLine(line)
+            form.showsPassword = false
+            form.error = ""
+        } catch {
+            form.error = error.localizedDescription
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Протокол", selection: $form.input.scheme) {
+                Text("HTTP").tag("http")
+                Text("HTTPS").tag("https")
+                Text("SOCKS5").tag("socks5")
+            }.pickerStyle(.segmented)
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
+                GridRow {
+                    Text("Адрес и порт")
+                    TextField("адрес:порт", text: Binding(get: { form.input.address }, set: { value in
+                        // A pasted provider string may contain credentials. Split it before displaying the address.
+                        if value.contains("@") || value.contains("://") || (!value.hasPrefix("[") && value.filter({ $0 == ":" }).count >= 3) {
+                            paste(value)
+                        } else { form.input.address = value; form.error = "" }
+                    })).accessibilityLabel("Адрес и порт")
+                }
+                GridRow {
+                    Text("Логин")
+                    TextField("Необязательно", text: $form.input.username).accessibilityLabel("Логин")
+                }
+                GridRow {
+                    Text("Пароль")
+                    HStack {
+                        Group {
+                            if form.showsPassword { TextField("Необязательно", text: $form.input.password) }
+                            else { SecureField("Необязательно", text: $form.input.password) }
+                        }.accessibilityLabel("Пароль")
+                        Button { form.showsPassword.toggle() } label: {
+                            Image(systemName: form.showsPassword ? "eye.slash" : "eye")
+                        }.buttonStyle(.plain).accessibilityLabel(form.showsPassword ? "Скрыть пароль" : "Показать пароль")
+                    }
+                }
+            }.textFieldStyle(.roundedBorder)
+            if !form.error.isEmpty { Text(form.error).font(.caption).foregroundStyle(.orange) }
+            HStack {
+                Button("Вставить строку") { paste(NSPasteboard.general.string(forType: .string) ?? "") }
+                Spacer()
+                Button(actionTitle) {
+                    do { let line = try form.input.connectionLine(); form.error = ""; apply(line, form.input.scheme) }
+                    catch { form.error = error.localizedDescription }
+                }.buttonStyle(.borderedProminent).disabled(form.input.address.isEmpty)
+            }
+        }.disabled(busy)
+    }
+}
+
 struct ProxyEditor: View {
     @ObservedObject var proxy:ProxyClient
     var body:some View {
@@ -675,7 +783,7 @@ struct ProxyEditor: View {
                             Text(proxy.observations[entry.id] ?? (proxy.measuring ? "Проверяем выход…" : "Выход ещё не проверен")).font(.caption)
                         }
                         Spacer()
-                        if proxy.ready && proxy.library.current==entry.id {Text(proxy.plan?.CommonPaused==true ? "Общий на паузе":"Подключён").foregroundStyle(.green)}
+                        if proxy.ready && proxy.library.current==entry.id {Text(proxy.plan?.CommonPaused==true ? "Общий на паузе":"Подключён").foregroundStyle(proxy.plan?.CommonPaused == true ? Color.secondary : Color.green)}
                         else { Button("Подключить"){proxy.selectSaved(entry)}.disabled(proxy.busy) }
                     }
                 }
@@ -693,19 +801,7 @@ struct ProxyEditor: View {
                 }.disabled(proxy.busy)
             } else if proxy.replacing || (proxy.expected.isEmpty && proxy.library.entries.isEmpty) {
                 if proxy.replacing && (proxy.paused || proxy.ready || !proxy.library.entries.isEmpty) {Button("Отменить добавление"){proxy.replacing=false}}
-                Text("Вставьте строку из кабинета провайдера. Guard проверит, что Claude и ChatGPT видят один IP.").font(.callout)
-                Picker("Протокол",selection:$proxy.scheme) {
-                    Text("HTTP").tag("http");Text("HTTPS").tag("https");Text("SOCKS5").tag("socks5")
-                }.pickerStyle(.segmented)
-                VStack(alignment:.leading,spacing:4) {
-                    Text("Адрес прокси").font(.subheadline.weight(.semibold))
-                    SecureField("логин:пароль@адрес:порт",text:$proxy.draft).textFieldStyle(.roundedBorder).accessibilityLabel("Адрес прокси")
-                }
-                HStack {
-                    Button("Вставить"){proxy.draft=NSPasteboard.general.string(forType:.string) ?? ""}
-                    Spacer()
-                    Button("Подключить"){proxy.connect(proxy.draft,proxy.scheme)}.buttonStyle(.borderedProminent).disabled(proxy.draft.isEmpty || proxy.busy)
-                }.disabled(proxy.busy)
+                ProxyFields(actionTitle: "Подключить", busy: proxy.busy, apply: proxy.connect)
                 Text("macOS запросит разрешение на настройку сети. Пароль хранится в Связке ключей.").font(.caption).foregroundStyle(.secondary)
             } else if proxy.ready {
                 Text("Выбранный выход   "+proxy.expected).textSelection(.enabled)

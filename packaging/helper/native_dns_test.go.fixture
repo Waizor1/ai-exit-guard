@@ -1,0 +1,31 @@
+// Compiled into a temporary test binary via a Go overlay. The answer policy
+// is synthetic; the UDP/TCP service and response encoding are production code.
+package main
+
+import (
+	"context"
+	"net"
+	"net/netip"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestNativeDNSFixture(t *testing.T) {
+	name := os.Getenv("GUARD_NATIVE_DNS_TEST_NAME")
+	if !strings.HasSuffix(name, ".test") {
+		t.Fatal("expected a synthetic .test host")
+	}
+	udp, err := net.FilePacketConn(os.Stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp, err := net.FileListener(os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var answers mcpAnswers
+	answers.replace(map[string][]netip.Addr{name: {netip.MustParseAddr("192.0.2.17")}}, originalDNS{}, time.Now().Add(2*time.Minute))
+	answers.serve(context.Background(), udp.(*net.UDPConn), tcp.(*net.TCPListener))
+}

@@ -99,10 +99,10 @@ struct ConnectionsPanel: View {
     let height: CGFloat
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Активные подключения").font(.title2.bold())
+            Text(list.failed && list.result != nil ? "Последние подключения" : "Активные подключения").font(.title2.bold())
             if let report = list.result {
+                if list.failed { Text("Не удалось обновить. Показан предыдущий список.").font(.callout).foregroundStyle(.secondary) }
                 ConnectionReport(report: report, height: height)
-                if list.failed { Text("Не удалось обновить. Показан предыдущий список.") }
                 if !report.DNS { Text("Часть адресов ИИ пока не удалось сверить.") }
                 if !report.Registry && proxy.ready { Text("Guard пока не передал домены соединений.") }
                 Text("Прямой выход определяется по совпадению IP. Один IP могут использовать разные сайты.")

@@ -217,3 +217,24 @@ func TestTransientDiagnosticCannotMaskChangedExit(t *testing.T) {
 		}
 	}
 }
+
+func TestDesktopAdvisoryDistinguishesConfirmedRisk(t *testing.T) {
+	cfg := desktopConfig{Expected: "93.184.216.34", ProxyOnly: true}
+	countries := map[string]string{"Claude": "DE FR"}
+	normal := result{Host: "api.anthropic.com", IP: cfg.Expected, AssessmentIP: cfg.Expected, Country: "DE", TraceCountry: "DE", InfoChecked: true}
+	if cfg.highRisk(normal, countries) || cfg.highRisk(result{Host: normal.Host}, countries) {
+		t.Fatal("missing evidence reported as dangerous")
+	}
+	for _, modify := range []func(*result){
+		func(r *result) { r.IP = "93.184.216.35" },
+		func(r *result) { r.Status = "red" },
+		func(r *result) { r.TraceCountry = "RU" },
+		func(r *result) { v := 67.0; r.Risk = &v },
+	} {
+		r := normal
+		modify(&r)
+		if !cfg.highRisk(r, countries) {
+			t.Fatalf("positive evidence not shown as high risk: %+v", r)
+		}
+	}
+}

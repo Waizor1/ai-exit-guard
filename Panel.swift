@@ -12,6 +12,10 @@ struct GuardPanel: View {
         guard let service,let plan=proxy.plan else{return false}
         return plan.CommonPaused == true && plan.Profiles[service] == nil
     }
+    private func needsProxy(_ service: String?) -> Bool {
+        service == "Antigravity" && proxy.plan == nil && !proxy.paused
+    }
+    private let googleProxyReason = "Guard проверяет выход Google только через настроенный прокси."
     private func hosts(_ service:String) -> [String] {
         Monitor.serviceHosts(service)
     }
@@ -25,7 +29,7 @@ struct GuardPanel: View {
         VStack(alignment:.leading,spacing:12) {
             HStack {
                 if model.permissions || model.selectedService != nil || model.proxySettings || model.showConnections {
-                    Button { if model.showConnections {model.showConnections=false} else if model.proxySettings {model.proxySettings=false} else if model.showHistory {model.showHistory=false} else if model.technical {model.technical=false} else {model.permissions=false;model.selectedService=nil} } label:{
+                    Button { if model.showConnections {model.showConnections=false} else if model.proxySettings {proxy.replacing=false;model.proxySettings=false} else if model.showHistory {model.showHistory=false} else if model.technical {model.technical=false} else {model.permissions=false;model.selectedService=nil} } label:{
                         Label("Назад",systemImage:"chevron.left")
                     }.buttonStyle(.plain)
                 } else {
@@ -49,9 +53,14 @@ struct GuardPanel: View {
                 Button("Общий прокси"){model.proxySettings=true}.buttonStyle(.link)
                 setting("bell","Уведомления",model.notificationState,model.notificationState=="Разрешены" ? "Тест" : model.notificationState=="Выключены" ? "Настройки" : "Разрешить",model.notifications)
                 setting("power","Запуск при входе",model.loginState,model.loginState=="Выключен" ? "Включить" : "Настройки",model.login)
-                Button("Подключения приложений"){model.showConnections=true}.buttonStyle(.link)
+                Button("Активные подключения"){model.showConnections=true}.buttonStyle(.link)
                 if !model.proxy.managesDomains && model.killSwitch.state != .off {
                     KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)
+                }
+                if !model.repairedMCPHosts.isEmpty {
+                    Text("Временный DNS для MCP").font(.headline)
+                    Text(model.repairedMCPHosts.joined(separator: ", ")).font(.caption).textSelection(.enabled)
+                    Button("Снять до перезапуска Guard", action: model.suspendMCPDNS)
                 }
                 Divider()
                 Button("Завершить AI Exit Guard"){ NSApp.terminate(nil) }
@@ -89,6 +98,11 @@ struct GuardPanel: View {
                         Text("Чтобы продолжить, откройте «Прокси» и подключите сохранённый профиль.")
                             .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }.padding(.vertical,6)
+                } else if needsProxy(model.selectedService) {
+                    Text("Antigravity").font(.subheadline.weight(.semibold))
+                    Label("Нужен прокси", systemImage: "network").font(.title2.bold())
+                    Text(googleProxyReason).font(.callout)
+                    Button("Настроить общий прокси") { model.proxySettings = true }
                 } else if proxyMode && model.selectedService == nil {
                     VStack(alignment:.leading,spacing:6) {
                         Label(model.online ? "Только прокси" : "Нет сети",systemImage:model.online ? "network" : "wifi.slash")
@@ -102,18 +116,20 @@ struct GuardPanel: View {
                 } else {
                     VStack(alignment:.leading,spacing:6) {
                         if let service=model.selectedService {Text(service).font(.subheadline.weight(.semibold))}
-                        Label(verdict.title,systemImage:verdict.symbol).font(.title2.bold())
+                        Label { Text(verdict.title) } icon: { Image(systemName:verdict.symbol).foregroundStyle(Color(nsColor:verdict.color)) }.font(.title2.bold())
                         Text(model.explanation(for:selectedHosts)).font(.callout).fixedSize(horizontal:false,vertical:true)
                     }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
                      .background(Color(nsColor:verdict.color).opacity(0.10),in:RoundedRectangle(cornerRadius:12))
                 }
                 if let service=model.selectedService {
-                    DisclosureGroup("Прокси для "+service) {
-                        ServiceProxyEditor(service:service,proxy:model.proxy).id(service).padding(.top,6)
+                    if !needsProxy(service) {
+                        DisclosureGroup("Прокси для "+service) {
+                            ServiceProxyEditor(service:service,proxy:model.proxy).id(service).padding(.top,6)
+                        }
                     }
                     let routes=hosts(service)
                     if service=="Antigravity" {
-                        if let code=model.rows[Monitor.googleHost]?.TraceCountry,!code.isEmpty {
+                        if !needsProxy(service), let code=model.rows[Monitor.googleHost]?.TraceCountry,!code.isEmpty {
                             LabeledContent("Страна у Google",value:Locale(identifier:"ru").localizedString(forRegionCode:code) ?? code)
                         }
                     } else {
@@ -148,15 +164,17 @@ struct GuardPanel: View {
                         }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12)).contentShape(Rectangle())
                     }.buttonStyle(.plain)
                 }
-                Divider()
-                HStack{
-                    ZStack { if model.running { ProgressView().controlSize(.small).accessibilityLabel("Идёт проверка") } }.frame(width:16,height:16)
-                    VStack(alignment:.leading,spacing:2){
-                        Text(model.running ? "Проверяем адрес…" : model.fresh.compactMap{model.rows[$0]?.Checked}.max().flatMap{ISO8601DateFormatter().date(from:$0)}.map{"Проверено в "+$0.formatted(date:.omitted,time:.shortened)} ?? "Адрес ещё не проверен").font(.caption)
-                        if model.proxy.expected.isEmpty && !proxy.paused { Text("Только наблюдение").font(.caption).foregroundStyle(.secondary) }
+                if !needsProxy(model.selectedService) {
+                    Divider()
+                    HStack{
+                        if model.running { ProgressView().controlSize(.small).accessibilityLabel("Идёт проверка") }
+                        VStack(alignment:.leading,spacing:2){
+                            Text(model.running ? "Проверяем адрес…" : model.fresh.compactMap{model.rows[$0]?.Checked}.max().flatMap{ISO8601DateFormatter().date(from:$0)}.map{"Проверено в "+$0.formatted(date:.omitted,time:.shortened)} ?? "Адрес ещё не проверен").font(.caption)
+                            if model.proxy.expected.isEmpty && !proxy.paused { Text("Только наблюдение").font(.caption).foregroundStyle(.secondary) }
+                        }
+                        Spacer()
+                        Button(action:model.check){Text("Проверить адрес")}.buttonStyle(.borderedProminent).disabled(model.running || !model.online || !model.directProbeAllowed)
                     }
-                    Spacer()
-                    Button(action:model.check){Text("Проверить адрес")}.buttonStyle(.borderedProminent).disabled(model.running || !model.online || !model.directProbeAllowed)
                 }
             }
         }.padding(18).frame(width:408).fixedSize(horizontal:false,vertical:true)
@@ -192,11 +210,14 @@ struct GuardPanel: View {
                         Text(name).font(.body.weight(.semibold))
                         Spacer()
                         if paused(name) {Text("На паузе").font(.caption).foregroundStyle(.secondary)}
+                        else if needsProxy(name) {Text("Нужен прокси").font(.caption).foregroundStyle(.secondary)}
                         else if checkedRoutes.isEmpty {
                             Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси").font(.caption).foregroundStyle(.secondary)
                         } else { status(state) }
                     }
-                    if !paused(name), !checkedRoutes.isEmpty, let finding {
+                    if needsProxy(name) {
+                        Text(googleProxyReason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    } else if !paused(name), !checkedRoutes.isEmpty, let finding {
                         Text(!model.online ? "Нет сети" : finding.verdict == .clear && state != .clear ? "Ждём подтверждения прокси" : finding.shortReason)
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }
@@ -282,32 +303,25 @@ private struct MainProxyCard:View {
     }
 }
 
-private final class ServiceProxyForm:ObservableObject {
-    @Published var editing=false
-    @Published var line=""
-    @Published var scheme="socks5"
-}
+private final class ServiceProxyForm: ObservableObject { @Published var editing = false }
+
 private struct ServiceProxyEditor:View {
     let service:String
     @ObservedObject var proxy:ProxyClient
-    @StateObject private var form=ServiceProxyForm()
+    @StateObject private var form = ServiceProxyForm()
     var body:some View {
         VStack(alignment:.leading,spacing:8){
             if proxy.plan == nil {Text("На главном экране нажмите «Прокси» и подключите общий адрес.").font(.callout)}
             else {
                 Picker("Маршрут",selection:Binding(get:{form.editing || proxy.plan?.Profiles[service] != nil},set:{individual in
                     if individual {form.editing=true}
-                    else {form.editing=false;form.line="";if proxy.plan?.Profiles[service] != nil {proxy.useCommon(service)}}
+                    else {form.editing=false;if proxy.plan?.Profiles[service] != nil {proxy.useCommon(service)}}
                 })){
                     Text("Общий").tag(false);Text("Индивидуальный").tag(true)
                 }.pickerStyle(.segmented).disabled(proxy.busy)
                 if form.editing {
-                    Picker("Протокол",selection:$form.scheme){Text("SOCKS5").tag("socks5");Text("HTTP").tag("http");Text("HTTPS").tag("https")}
-                    SecureField("логин:пароль@адрес:порт",text:$form.line).textFieldStyle(.roundedBorder)
-                    HStack {
-                        Button("Вставить"){form.line=NSPasteboard.general.string(forType:.string) ?? ""}
-                        Spacer()
-                        Button("Проверить и применить"){proxy.useIndividual(service,line:form.line,scheme:form.scheme)}.disabled(form.line.isEmpty || proxy.busy)
+                    ProxyFields(endpoint: proxy.plan?.Profiles[service]?.Endpoint, actionTitle: "Проверить и применить", busy: proxy.busy) { line, scheme in
+                        proxy.useIndividual(service, line: line, scheme: scheme)
                     }
                 } else {
                     HStack{Text("IP выхода");Spacer();Text(proxy.expectedIP(service)).monospacedDigit()
@@ -317,7 +331,7 @@ private struct ServiceProxyEditor:View {
                 if !proxy.profileMessage.isEmpty {Text(proxy.profileMessage).font(.caption).foregroundStyle(.secondary)}
             }
         }.onAppear{proxy.profileMessage=""}.onReceive(proxy.$profileMessage){note in
-            if note=="Маршрут сохранён." {form.editing=false;form.line=""}
+            if note=="Маршрут сохранён." {form.editing=false}
         }
     }
 }

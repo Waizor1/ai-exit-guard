@@ -38,8 +38,25 @@ var desktopRegionReviewed = time.Unix(1795305600, 0)
 // Each Windows status is also the lease decision. Only a successful reading
 // has an empty reason; the UI cannot independently relax a closed route.
 type desktopRoute struct {
-	Until  int64
-	Reason string
+	Until    int64
+	Reason   string
+	HighRisk bool
+}
+
+// HighRisk describes affirmative evidence about this route for the advisory UI.
+func (c desktopConfig) highRisk(r result, countries map[string]string) bool {
+	service := serviceForHost(r.Host)
+	if r.IP != "" && r.IP != c.pin(service) || r.Status == "red" {
+		return true
+	}
+	if r.IP != "" && r.AssessmentIP == r.IP && ((valid(r.Risk) && *r.Risk > 66) || (valid(r.Trust) && *r.Trust <= 100.0/3)) {
+		return true
+	}
+	if countries[service] == "" {
+		return false
+	}
+	return r.TraceCountry != "" && !isProtectedCountry(service, r.TraceCountry, countries) ||
+		r.InfoChecked && r.Country != "" && !isProtectedCountry(service, r.Country, countries)
 }
 
 func (c desktopConfig) refusal(r result, countries map[string]string, now time.Time) string {
@@ -126,7 +143,7 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		reason := c.refusal(r, countries, time.Now())
 		if !c.ProxyOnly && reason != "" && !c.temporaryReading(r, service, countries, time.Now()) {
 			relay.control(service + " 0")
-			closed := desktopRoute{Reason: reason}
+			closed := desktopRoute{Reason: reason, HighRisk: c.highRisk(r, countries)}
 			if state[service] != closed {
 				state[service] = closed
 				c.report(output, state)
@@ -149,29 +166,35 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		now := time.Now()
 		until := now.Add(maxLease)
 		reason := ""
-		temporary := false
+		temporary := true
+		highRisk := false
 		for _, host := range group {
 			r := rows[host]
 			checked, err := time.Parse(time.RFC3339, r.Checked)
-			reason = c.refusal(r, countries, now)
-			if reason == "" && (err != nil || checked.After(now) || !checked.Add(maxLease).After(now)) {
-				reason = "Срок проверки истёк. Ожидаем новый результат."
+			finding := c.refusal(r, countries, now)
+			if finding == "" && (err != nil || checked.After(now) || !checked.Add(maxLease).After(now)) {
+				finding = "Срок проверки истёк. Ожидаем новый результат."
 			}
-			if reason != "" {
-				temporary = c.temporaryReading(r, service, countries, now)
+			if finding != "" {
+				high := c.highRisk(r, countries)
+				if reason == "" || (high && !highRisk) {
+					reason = finding
+				}
+				highRisk = highRisk || high
+				temporary = temporary && c.temporaryReading(r, service, countries, now)
 				until = time.Time{}
-				break
+				continue
 			}
 			if end := checked.Add(maxLease); end.Before(until) {
 				until = end
 			}
 		}
-		if !c.ProxyOnly && temporary && state[service].Until > now.Unix() {
+		if !c.ProxyOnly && reason != "" && temporary && state[service].Until > now.Unix() {
 			// An explicit change was already revoked in the callback above.
 			// The timer in relayGate independently enforces the original deadline.
 			continue
 		}
-		state[service] = desktopRoute{Reason: reason}
+		state[service] = desktopRoute{Reason: reason, HighRisk: highRisk}
 		if c.ProxyOnly {
 			// In advisory mode a measurement must never alter the live tunnel.
 			if reason == "" {

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -33,9 +34,11 @@ sealed class GuardWindow : Form {
     sealed class Reading {
         public long Until {get;set;}
         public string Reason {get;set;}
+        public bool HighRisk {get;set;}
     }
     readonly Color ink=Color.FromArgb(246,245,244), muted=Color.FromArgb(198,196,194);
     readonly Color surface=Color.FromArgb(43,42,42), card=Color.FromArgb(55,54,54), accent=Color.FromArgb(0,112,232);
+    readonly Label inputFeedback = new Label{AutoSize=true,Visible=false,Dock=DockStyle.Fill};
     readonly Label[] reasons=new Label[3];
     readonly Button checkAddress=new SoftButton();
     readonly Label lastResult=new Label{Text="Адрес ещё не проверен",AutoSize=true,Anchor=AnchorStyles.Left};
@@ -150,7 +153,14 @@ sealed class GuardWindow : Form {
         var version=Copy(Application.ProductVersion,false);version.Name="ProductVersion";
         version.AccessibleName="Версия "+version.Text;version.Margin=new Padding(2,8,2,4);
         identity.Controls.Add(version);header.Controls.Add(identity,1,0);
-        if(pages.TabCount==1)header.Controls.Add(ActionButton("Настройки",(s,e)=>pages.SelectedIndex=1),2,0);
+        if(pages.TabCount==1){
+            var settingsMenu=new ContextMenuStrip();
+            settingsMenu.Items.Add("Прокси",null,(s,e)=>pages.SelectedIndex=1);
+            settingsMenu.Items.Add("Активные подключения",null,(s,e)=>pages.SelectedIndex=2);
+            settingsMenu.Items.Add("Завершить Guard",null,(s,e)=>{quitting=true;Close();});
+            header.Controls.Add(ActionButton("Настройки",(sender,e)=>{var button=(Button)sender;settingsMenu.Show(button,0,button.Height);}),2,0);
+            Disposed+=(s,e)=>settingsMenu.Dispose();
+        }
         grid.Controls.Add(header);
         return grid;
     }
@@ -354,7 +364,7 @@ sealed class GuardWindow : Form {
         start.BackColor=accent;start.ForeColor=Color.White;start.FlatStyle=FlatStyle.Flat;start.FlatAppearance.BorderSize=0;
         start.Click+=(s,e)=>{
             if(relay!=null || retrying){Disconnect();if(relay!=null)pages.SelectedIndex=0;return;}
-            pages.SelectedIndex=0;Connect();
+            Connect();
         };
         var activity=Page("Подключения");
         var connectionsTitle=Copy("Активные подключения",true);connectionsTitle.Font=new Font(Font.FontFamily,18,FontStyle.Bold);activity.Controls.Add(connectionsTitle);
@@ -374,7 +384,7 @@ sealed class GuardWindow : Form {
             catch(IOException){RelayEnded();}
         };
         actions.Controls.Add(checkAddress,1,0);home.Controls.Add(actions);
-        var heading=Copy("Общий прокси",true);heading.Font=new Font(Font.FontFamily,18,FontStyle.Bold);settings.Controls.Add(heading);ProxyInputs(settings,0);
+        var heading=Copy("Общий прокси",true);heading.Font=new Font(Font.FontFamily,18,FontStyle.Bold);settings.Controls.Add(heading);inputFeedback.ForeColor=Color.FromArgb(255,195,111);settings.Controls.Add(inputFeedback);ProxyInputs(settings,0);
         urls[0].TextChanged+=(s,e)=>edit.Text=String.IsNullOrWhiteSpace(urls[0].Text)?"Добавить прокси":"Прокси";
         start.Anchor=AnchorStyles.Right;
         var fields=(TableLayoutPanel)paste[0].Parent;
@@ -423,6 +433,7 @@ sealed class GuardWindow : Form {
     }
     void ShowWindow(){Show();WindowState=FormWindowState.Normal;Activate();}
     void State(string text,bool open){
+        if(checkingProxy && pages.SelectedIndex==1 && relay==null){inputFeedback.Text=text;inputFeedback.Visible=true;}
         status.Text=text;status.AccessibleDescription=text;proxyBadge.Text=relay==null?"Выключен":relayReady?"Подключён":"Подключаем…";
         verdict.Text=open?"Можно работать":relay==null?"Прокси отключён":leases==null?"Проверяем подключение":"Доступ ограничен";
         bool closed=relay!=null && leases!=null && text.StartsWith("Доступно сервисов: 0 из 3",StringComparison.Ordinal);
@@ -432,10 +443,13 @@ sealed class GuardWindow : Form {
         if(relay==null)verdict.ForeColor=ink;
         bool routing=ProxyOnly && relayReady;
         if(routing){verdict.Text="Только прокси";verdict.ForeColor=ink;summary.BackColor=leases==null?card:open?Color.FromArgb(48,60,48):Color.FromArgb(66,54,44);}
+        bool danger=leases!=null && leases.Values.Any(r=>r.HighRisk && r.Until==0);
+        if(routing && danger){verdict.Text="Высокий риск";verdict.ForeColor=Color.LightSalmon;summary.BackColor=Color.FromArgb(66,42,44);}
+        if(retrying && relay==null){verdict.Text="Восстанавливаем соединение";proxyBadge.Text="Переподключение";verdict.ForeColor=Color.FromArgb(255,195,111);}
         if(!relayReady)checkAddress.Enabled=false;
         else if(checkAddress.Text!="Проверяем…")checkAddress.Enabled=true;
         start.BackColor=relay!=null || retrying?ControlPaint.Light(card,.17f):accent;
-        tray.Text="Guard · "+verdict.Text;tray.Icon=routing?SystemIcons.Shield:open?SystemIcons.Information:closed?SystemIcons.Error:SystemIcons.Warning;
+        tray.Text="Guard · "+verdict.Text;tray.Icon=routing && danger?SystemIcons.Error:routing && open?SystemIcons.Shield:routing?SystemIcons.Warning:open?SystemIcons.Information:closed?SystemIcons.Error:SystemIcons.Warning;
     }
     sealed class ProxyEndpoint {
         public string Scheme,Host,User,Password;
@@ -474,7 +488,7 @@ sealed class GuardWindow : Form {
     }
     async void Connect() {
         if(checkingProxy || relay!=null)return;
-        checkingProxy=true;Inputs(false);start.Enabled=false;
+        checkingProxy=true;inputFeedback.Visible=false;Inputs(false);start.Enabled=false;
         try {
             var profiles=new Dictionary<string,object>();var routes=new List<Route>();object common=null;
             for(int i=0;i<4;i++) {
@@ -506,7 +520,7 @@ sealed class GuardWindow : Form {
             string temp=Path.Combine(Path.GetDirectoryName(saved),Guid.NewGuid().ToString()+".tmp");
             try{File.WriteAllBytes(temp,data);if(File.Exists(saved))File.Replace(temp,saved,null);else File.Move(temp,saved);}
             finally{if(File.Exists(temp))File.Delete(temp);}
-            ShowIdle("Подключаем…");Inputs(false);start.Text="Отключить прокси";State(ProxyOnly?"Запускаем прокси…":"Проверяем адреса перед подключением.",false);
+            pages.SelectedIndex=0;inputFeedback.Visible=false;ShowIdle("Подключаем…");Inputs(false);start.Text="Отключить прокси";State(ProxyOnly?"Запускаем прокси…":"Проверяем адреса перед подключением.",false);
         }catch(FormatException){State("Проверьте строку прокси. Пример: логин:пароль@адрес:порт.",false);}
          catch{Stop();State("Не удалось запустить Guard или сохранить настройки.",false);}
         finally{
@@ -617,21 +631,22 @@ sealed class GuardWindow : Form {
     }
     void RenderReadings(long now){
         int open=0, waiting=0;
-        string firstIssue=null;
+        string firstIssue=null;bool highIssue=false;
         for(int i=0;i<outcomes.Length;i++){
             Reading r;string caption;Color color;
             if(!leases.TryGetValue(names[i+1],out r)){caption="Проверяем…";color=muted;waiting++;}
             else if(r.Until>now){caption=ProxyOnly?"✓  Низкий риск":"✓  Можно работать";color=Color.LightGreen;open++;}
-            else{caption=ProxyOnly?"!  Есть замечание":"×  Закрыт";color=ProxyOnly?Color.FromArgb(255,195,111):Color.LightSalmon;}
+            else{caption=ProxyOnly?(r.HighRisk?"×  Высокий риск":"!  Есть замечание"):"×  Закрыт";color=ProxyOnly && !r.HighRisk?Color.FromArgb(255,195,111):Color.LightSalmon;}
             if(outcomes[i].Text!=caption){outcomes[i].Text=caption;outcomes[i].ForeColor=color;}
             string reason=r==null || r.Until>now?"":r.Reason;
             if(r!=null && r.Until<=now && String.IsNullOrEmpty(reason))reason="Срок проверки истёк.";
-            if(firstIssue==null && !String.IsNullOrEmpty(reason))firstIssue=names[i+1]+": "+reason;
+            if(!String.IsNullOrEmpty(reason) && (firstIssue==null || (r!=null && r.HighRisk && !highIssue))){firstIssue=names[i+1]+": "+reason;highIssue=r!=null && r.HighRisk;}
             if(r==null)reason="Ожидаем результат проверки.";
             else if(r.Until>now)reason=(String.IsNullOrWhiteSpace(urls[i+1].Text)?"Общий прокси":"Свой прокси")+" · оценка до "+DateTimeOffset.FromUnixTimeSeconds(r.Until).LocalDateTime.ToString("HH:mm");
             if(reasons[i].Text!=reason)ShowReason(i,reason);
         }
         string current=ProxyOnly?(waiting>0?"Проверяем адреса…":open==3?"Замечаний по адресу нет.":"Есть замечания к выходному IP."):waiting>0?"Идёт проверка…":open==3?"Все три сервиса доступны":"Доступно сервисов: "+open+" из 3";
+        if(ProxyOnly && highIssue)current="Guard предупреждает о риске. Блокировка по IP выключена.";
         if(firstIssue!=null)current=current.TrimEnd('.','…')+". "+firstIssue;
         if(status.Text!=current)State(current,open==3);
     }
@@ -715,6 +730,9 @@ sealed class GuardWindow : Form {
         relayReady=false;protection.Checked=false;relayReady=true;RenderReadings(demoTime);
         if(!outcomes[2].Text.Contains("Есть замечание") || !checkAddress.Visible || !reasons[2].Visible)return 23;
         SaveSmokeImage("04-proxy-only-warning.png");
+        leases["Antigravity"]=new Reading{Until=0,HighRisk=true,Reason="IP123 отметил высокий риск для сервиса."};RenderReadings(demoTime);
+        if(!outcomes[2].Text.Contains("Высокий риск") || verdict.Text!="Высокий риск")return 37;
+        SaveSmokeImage("07-proxy-only-high-risk.png");
         pages.SelectedIndex=1;
         if(byField[0].Enabled || !start.Enabled || !start.Text.Contains("Отключить"))return 34;
         start.PerformClick();if(relay!=null || !urls[0].Enabled)return 16;

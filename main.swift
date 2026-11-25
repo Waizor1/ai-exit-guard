@@ -41,6 +41,8 @@ struct Reading: Decodable, Equatable {
 }
 
 final class Monitor: NSObject, ObservableObject {
+    @Published var repairedMCPHosts: [String] = []
+    var suspendMCPDNS: () -> Void = {}
     @Published var rows = [String:Reading]()
     @Published var running = false
     @Published var note = ""
@@ -449,6 +451,7 @@ final class StatusPanel: NSPanel {
 }
 final class GuardDelegate: NSObject, NSApplicationDelegate {
     let model = Monitor()
+    private let mcpDNS = MCPDNSMonitor()
     let path = NWPathMonitor()
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let panel = StatusPanel(contentRect:.zero, styleMask:[.borderless,.nonactivatingPanel], backing:.buffered, defer:false)
@@ -463,6 +466,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     var pending: DispatchWorkItem?
     var observation: AnyCancellable?
     var connectionObservation: AnyCancellable?
+    private var mcpPause:AnyCancellable?
     private var proxyReadiness:AnyCancellable?
     private var monitoringActivity:NSObjectProtocol?
     private func maintainMonitoring(_ ready:Bool) {
@@ -488,6 +492,8 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             migration.standardOutput=FileHandle.nullDevice
             try? migration.run()
         }
+        mcpDNS.changed = { [weak self] hosts in self?.model.repairedMCPHosts = hosts }
+        model.suspendMCPDNS = { [weak self] in self?.mcpDNS.suspend() }
         NSApp.setActivationPolicy(.accessory)
         model.proxy.routeChanged={ [weak self] in self?.recheck() }
         model.proxy.profileChanged={ [weak self] _ in
@@ -495,6 +501,10 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             m.invalidate("",closeAll:false);m.check()
         }
         proxyReadiness=model.proxy.$ready.removeDuplicates().sink { [weak self] ready in self?.maintainMonitoring(ready) }
+        mcpPause = model.proxy.$paused.removeDuplicates().sink { [weak self] paused in
+            guard let self, self.signature != nil else { return }
+            if paused { self.mcpDNS.stop() } else if self.model.online { self.mcpDNS.start() }
+        }
         model.proxy.restore()
         panel.title = "AI Exit Guard"
         panel.isFloatingPanel = true
@@ -529,6 +539,8 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard let self=self,self.signature != key else{return}
                 self.signature=key;self.model.online=p.status == .satisfied
+                self.mcpDNS.stop()
+                if self.model.online && !self.model.proxy.paused { self.mcpDNS.start() }
                 self.model.killSwitch.refresh()
                 self.recheck(keepPinned:true)
             }
@@ -537,6 +549,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(timer,forMode:.common)
         periodic=timer
         path.start(queue:DispatchQueue(label:"guard.network"))
+        NSWorkspace.shared.notificationCenter.addObserver(self,selector:#selector(sleepDNS),name:NSWorkspace.willSleepNotification,object:nil)
         NSWorkspace.shared.notificationCenter.addObserver(self,selector:#selector(wake),name:NSWorkspace.didWakeNotification,object:nil)
         NotificationCenter.default.addObserver(self,selector:#selector(screenChanged),name:NSApplication.didChangeScreenParametersNotification,object:nil)
         outside=NSEvent.addGlobalMonitorForEvents(matching:[.leftMouseDown,.rightMouseDown]) { [weak self] _ in
@@ -563,7 +576,12 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         pending=work
         DispatchQueue.main.asyncAfter(deadline:.now()+0.7,execute:work)
     }
-    @objc func wake(){recheck()}
+    @objc func sleepDNS(){ mcpDNS.stop() }
+    @objc func wake(){
+        mcpDNS.stop()
+        if model.online && !model.proxy.paused { mcpDNS.start() }
+        recheck()
+    }
     @objc func screenChanged(){
         guard panel.isVisible else{return}
         guard let id=display?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
@@ -674,6 +692,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         return model.proxy.prepareForQuit() ? .terminateNow : .terminateCancel
     }
     func applicationWillTerminate(_ n:Notification){
+        mcpDNS.stop()
         maintainMonitoring(false)
         periodic?.invalidate();pending?.cancel();path.cancel();model.invalidate("");model.proxy.shutdown()
         if let outside=outside{NSEvent.removeMonitor(outside)}

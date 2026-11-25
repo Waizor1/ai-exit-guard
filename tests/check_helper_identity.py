@@ -36,7 +36,9 @@ with tempfile.TemporaryDirectory() as tmp:
     source.write_text(original.replace('geteuid() == 0', 'geteuid() != 0').replace('"/private/etc"', f'"{folder}"')
                       .replace('"/usr/bin/dscacheutil"', f'"{folder}/dscacheutil"').replace('"/usr/bin/killall"', f'"{folder}/killall"'))
     daemon = folder/'service'
-    run('xcrun','swiftc',shared,source,'-o',daemon)
+    catalog = folder / 'MCPCatalog.swift'
+    run('python3', root/'packaging/helper/catalog_source.py', catalog)
+    run('xcrun','swiftc',shared,source,catalog,'-o',daemon)
     ping = """
 import Foundation
 let connection = NSXPCConnection(machServiceName: guardServiceName)

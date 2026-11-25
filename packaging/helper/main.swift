@@ -3,11 +3,7 @@ import SystemConfiguration
 
 // Keep root's policy independent of any per-user discovery or configuration.
 enum DNSLeasePolicy {
-    static let hosts: Set<String> = [
-        "mcp.context7.com", "mcp.linear.app", "mcp.figma.com", "mcp.notion.com",
-        "mcp.sentry.dev", "mcp.supabase.com", "mcp.stripe.com", "mcp.atlassian.com",
-        "mcp.exa.ai", "api.githubcopilot.com", "docs.mcp.cloudflare.com", "radar.mcp.cloudflare.com"
-    ]
+    static let hosts: Set<String> = embeddedMCPHosts
 
     static func permits(_ names: [String]) -> Bool {
         (1...10).contains(names.count) && Set(names).count == names.count && Set(names).isSubset(of: hosts)

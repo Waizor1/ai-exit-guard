@@ -7,17 +7,16 @@ pinned fixture UID replaces console-user discovery so headless CI can exercise D
 """
 import argparse
 from contextlib import ExitStack
+import json
 import os
 from pathlib import Path
 import plistlib
 import re
 import select
 import socket
-import struct
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import uuid
 
@@ -27,7 +26,10 @@ ANSWER = '192.0.2.17'
 
 
 def run(*args, **kwargs):
-    return subprocess.run(args, text=True, check=True, capture_output=True, timeout=45, **kwargs)
+    try:
+        return subprocess.run(args, text=True, check=True, capture_output=True, timeout=120, **kwargs)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f'{args[0]} failed: {error.stderr.strip()}') from error
 
 
 def build(folder, label, names):
@@ -35,8 +37,8 @@ def build(folder, label, names):
     rules.write_text((ROOT / 'GuardRules.swift').read_text().replace('local.aiexitguard.rules', label))
     main = folder / 'main.swift'
     source = (HERE / 'main.swift').read_text()
-    start = source.index('    static let hosts: Set<String> = [')
-    end = source.index(']', start) + 1
+    start = source.index('    static let hosts: Set<String> = ')
+    end = source.index('\n\n    static func permits', start)
     source = source[:start] + '    static let hosts: Set<String> = ["' + '", "'.join(names) + '"]' + source[end:]
     start = source.index('        var uid: uid_t = 0')
     end = source.index('\n    }', start)
@@ -49,7 +51,12 @@ def build(folder, label, names):
     identifier = label + '.client'
     run('/usr/bin/codesign', '--force', '--options', 'runtime', '--identifier', identifier, '-s', '-', client)
     digest = re.search(r'^CDHash=([0-9a-f]{40})$', run('/usr/bin/codesign', '-dvvv', client).stderr, re.M)[1]
-    return service, client, f'identifier "{identifier}" and cdhash H"{digest}"'
+    overlay = folder / 'overlay.json'
+    overlay.write_text(json.dumps({'Replace': {str(ROOT / 'native_dns_fixture_darwin_test.go'):
+                                                str(HERE / 'native_dns_test.go.fixture')}}))
+    worker = folder / 'worker'
+    run('go', 'test', '-c', '-overlay', overlay, '-o', worker, '.', cwd=ROOT)
+    return service, client, worker, f'identifier "{identifier}" and cdhash H"{digest}"'
 
 
 def sockets(stack):
@@ -66,66 +73,6 @@ def sockets(stack):
             continue
         return stack.enter_context(udp), stack.enter_context(tcp)
     raise RuntimeError('Cannot allocate an exclusive loopback UDP/TCP pair')
-
-
-def dns_answer(packet, expected_name):
-    if len(packet) < 17 or packet[4:6] != b'\x00\x01':
-        return None
-    labels = []
-    pos = 12
-    while pos < len(packet) and packet[pos]:
-        size = packet[pos]
-        if size > 63 or pos + 1 + size > len(packet):
-            return None
-        labels.append(packet[pos+1:pos+1+size].lower())
-        pos += size + 1
-    end = pos + 5
-    if end > len(packet) or b'.'.join(labels) != expected_name.encode('ascii'):
-        return None
-    qtype, qclass = struct.unpack('!HH', packet[pos+1:end])
-    positive = qtype == 1 and qclass == 1
-    header = packet[:2] + struct.pack('!HHHHH', 0x8180, 1, int(positive), 0, 0)
-    answer = bytes.fromhex('c00c00010001000000000004') + socket.inet_aton(ANSWER) if positive else b''
-    return header + packet[12:end] + answer
-
-
-def serve_udp(sock, name, stop):
-    while not stop.is_set():
-        if select.select([sock], [], [], 0.1)[0]:
-            packet, peer = sock.recvfrom(4096)
-            answer = dns_answer(packet, name)
-            if answer:
-                sock.sendto(answer, peer)
-
-
-def read_exact(conn, count):
-    data = bytearray()
-    while len(data) < count:
-        chunk = conn.recv(count - len(data))
-        if not chunk:
-            break
-        data.extend(chunk)
-    return bytes(data)
-
-
-def serve_tcp(sock, name, stop):
-    while not stop.is_set():
-        if not select.select([sock], [], [], 0.1)[0]:
-            continue
-        conn, _ = sock.accept()
-        with conn:
-            conn.settimeout(1)
-            try:
-                prefix = read_exact(conn, 2)
-                if len(prefix) != 2:
-                    continue
-                length = int.from_bytes(prefix, 'big')
-                if length <= 4096:
-                    answer = dns_answer(read_exact(conn, length), name)
-                    if answer:
-                        conn.sendall(len(answer).to_bytes(2, 'big') + answer)
-            except OSError:
-                continue
 
 
 def resolver_status(name, port):
@@ -155,11 +102,11 @@ def getaddrinfo(name):
 try:
     rows = socket.getaddrinfo(sys.argv[1], 443, socket.AF_INET, socket.SOCK_STREAM)
     print('matched' if any(r[4][0] == sys.argv[2] for r in rows) else 'other')
-except socket.gaierror:
-    print('absent')
+except socket.gaierror as error:
+    print('absent' if error.errno in (socket.EAI_NONAME, socket.EAI_NODATA) else 'temporary lookup failure')
 """
     try:
-        result = subprocess.run([sys.executable, '-c', script, name, ANSWER], text=True,
+        result = subprocess.run([sys.executable, '-c', script, name + '.', ANSWER], text=True,
                                 capture_output=True, check=True, timeout=4)
     except subprocess.TimeoutExpired:
         return 'timeout'
@@ -178,20 +125,19 @@ def terminate(child):
     if child.poll() is None:
         child.kill()
     child.wait(timeout=5)
-    child.stdin.close()
-    child.stdout.close()
+    if child.stdin is not None:
+        child.stdin.close()
+    if child.stdout is not None:
+        child.stdout.close()
 
 
-def exercise(client, name, crash):
+def exercise(client, worker, name, crash):
     with ExitStack() as stack:
         udp, tcp = sockets(stack)
         port = udp.getsockname()[1]
-        stop = threading.Event()
-        for responder, bound_socket in ((serve_udp, udp), (serve_tcp, tcp)):
-            thread = threading.Thread(target=responder, args=(bound_socket, name, stop))
-            thread.start()
-            stack.callback(thread.join, 2)
-        stack.callback(stop.set)
+        answering = subprocess.Popen([worker, '-test.run=^TestNativeDNSFixture$'], stdin=udp, stdout=tcp,
+                                     env={**os.environ, 'GUARD_NATIVE_DNS_TEST_NAME': name})
+        stack.callback(terminate, answering)
         child = subprocess.Popen([client, name, str(udp.fileno()), str(tcp.fileno())],
                                  pass_fds=(udp.fileno(), tcp.fileno()), stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, text=True)
@@ -212,7 +158,9 @@ def exercise(client, name, crash):
             line(child, 'cleared')
         until(lambda: resolver_status(name, port), 'absent', 'resolver withdrawal')
         # Leave both answering sockets up. A stale route would still return ANSWER.
-        until(lambda: getaddrinfo(name) in ('other', 'absent'), True, 'getaddrinfo after withdrawal')
+        until(lambda: getaddrinfo(name) in ('other', 'absent'), True, 'getaddrinfo after withdrawal', seconds=30)
+        if answering.poll() is not None:
+            raise AssertionError('Production DNS responder exited during the test')
         print('Passed scutil + getaddrinfo publication and', 'client SIGKILL' if crash else 'explicit withdrawal')
 
 
@@ -227,7 +175,7 @@ def main():
     names = [f'lease-{phase}-{token}.test' for phase in ('clear', 'crash')]
     with tempfile.TemporaryDirectory() as work, ExitStack() as stack:
         folder = Path(work)
-        service, client, requirement = build(folder, label, names)
+        service, client, worker, requirement = build(folder, label, names)
         if args.compile_only:
             print('Compiled and signed the isolated native DNS fixture')
             return
@@ -246,7 +194,7 @@ def main():
         run(*sudo, '/bin/launchctl', 'bootstrap', 'system', target_plist)
         stack.callback(run, *sudo, '/bin/launchctl', 'bootout', 'system/' + label)
         for name, crash in zip(names, (False, True)):
-            exercise(client, name, crash)
+            exercise(client, worker, name, crash)
 
 
 if __name__ == '__main__':

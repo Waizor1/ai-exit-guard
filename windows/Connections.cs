@@ -66,7 +66,7 @@ sealed class ConnectionPane {
             list.Columns[1].Width=Math.Max(60,list.ClientSize.Width-stateWidth-timeWidth-SystemInformation.VerticalScrollBarWidth);
         };
         list.Resize+=(s,e)=>fitColumns();list.FontChanged+=(s,e)=>fitColumns();
-        panel.Controls.Add(note);panel.Controls.Add(list);
+        panel.Controls.Add(note);panel.Controls.Add(list);Render();
     }
     public void Update(Flow[] rows,bool connected){
         recent=rows??new Flow[0];online=connected;Render();
