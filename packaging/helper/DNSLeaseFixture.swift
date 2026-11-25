@@ -135,7 +135,9 @@ assert(call { other.publishSystemDNS(su1, tcp: st1, withReply: $0) })
 let sysKey = values().keys.first!
 assert(values()[sysKey] == ["ServerAddresses": ["127.0.0.1"], "ServerPort": Int(sp1),
                             "SearchOrder": 50000,
-                            "SupplementalMatchDomains": [""], "SupplementalMatchDomainsNoSearch": 1])
+                            "SupplementalMatchDomains": [""],
+                            "SupplementalMatchOrders": [50000],
+                            "SupplementalMatchDomainsNoSearch": 1])
 assert(call(other.renewSystemDNS))
 let (thirdClient, third) = connect()
 assert(!call { third.publishSystemDNS(su2, tcp: st2, withReply: $0) })

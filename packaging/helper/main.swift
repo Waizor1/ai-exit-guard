@@ -81,7 +81,9 @@ private final class DNSLease {
         self.tcp = tcp
         value = [kSCPropNetDNSServerAddresses: ["127.0.0.1"], kSCPropNetDNSServerPort: Int(port),
                  kSCPropNetDNSSearchOrder: 50000,
-                 kSCPropNetDNSSupplementalMatchDomains: [""], "SupplementalMatchDomainsNoSearch": 1]
+                 kSCPropNetDNSSupplementalMatchDomains: [""],
+                 kSCPropNetDNSSupplementalMatchOrders: [50000],
+                 "SupplementalMatchDomainsNoSearch": 1]
         guard let session = SCDynamicStoreCreate(nil, guardServiceName as CFString, nil, nil),
               SCDynamicStoreAddTemporaryValue(session, key as CFString, value) else { return nil }
         store = session
