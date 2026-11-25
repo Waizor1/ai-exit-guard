@@ -21,6 +21,9 @@ sealed class GuardWindow : Form {
     readonly TextBox[] urls = new TextBox[4];
     readonly ProtocolPicker[] schemes = new ProtocolPicker[4];
     readonly Button[] paste = new Button[4];
+    readonly CheckBox[] reveal=new CheckBox[4];
+    ConnectionPane connections;
+    DateTime nextFlows;
     readonly string[] pins = new string[4];
     readonly Label status = new Label { AutoSize=true };
     readonly Label[] outcomes = new Label[3];
@@ -111,7 +114,7 @@ sealed class GuardWindow : Form {
         fields.Controls.Add(schemes[i],0,1);fields.SetColumnSpan(schemes[i],2);
         var hint=Copy("Строка прокси · логин:пароль@адрес:порт",false);
         fields.Controls.Add(hint,0,2);fields.SetColumnSpan(hint,2);
-        urls[i]=new TextBox{AccessibleName=names[i]+" — строка прокси",Anchor=AnchorStyles.Left|AnchorStyles.Right,UseSystemPasswordChar=true};
+        urls[i]=new TextBox{AccessibleName=names[i]+" — строка прокси",Anchor=AnchorStyles.Left|AnchorStyles.Right,UseSystemPasswordChar=false};
         var input=new RoundedCard{Dock=DockStyle.Fill,AutoSize=true,ColumnCount=1,BackColor=Color.FromArgb(28,28,28),Padding=new Padding(8,6,8,6),Margin=new Padding(0,4,0,5)};
         input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         urls[i].BackColor=input.BackColor;urls[i].ForeColor=ink;urls[i].BorderStyle=BorderStyle.None;
@@ -123,7 +126,7 @@ sealed class GuardWindow : Form {
                 urls[i].Focus();
             }catch(System.Runtime.InteropServices.ExternalException){MessageBox.Show(this,"Буфер обмена занят. Попробуйте ещё раз.");}
         });
-        paste[i].AccessibleName="Вставить прокси — "+names[i];
+        paste[i].BackColor=Color.FromArgb(77,76,76);paste[i].AccessibleName="Вставить прокси — "+names[i];
         fields.Controls.Add(paste[i],0,4);
         schemes[i].Changed+=(sender,e)=>pins[i]=null;
         urls[i].TextChanged+=(sender,e)=>{
@@ -138,6 +141,9 @@ sealed class GuardWindow : Form {
             urls[i].Text=raw.Substring(separator+3);
             urls[i].SelectionStart=urls[i].TextLength;
         };
+        reveal[i]=new CheckBox{Text="Показывать строку",Checked=true,AutoSize=true,ForeColor=ink,Dock=DockStyle.Fill};
+        reveal[i].CheckedChanged+=(sender,e)=>urls[i].UseSystemPasswordChar=!reveal[i].Checked;
+        fields.Controls.Add(reveal[i],0,5);fields.SetColumnSpan(reveal[i],2);
         grid.Controls.Add(fields);
     }
     void ShowIdle(string message) {
@@ -234,6 +240,12 @@ sealed class GuardWindow : Form {
         start.Text="Подключить прокси";start.AutoSize=true;start.Padding=new Padding(12,4,12,4);start.Margin=new Padding(0,8,0,4);
         start.BackColor=accent;start.ForeColor=Color.White;start.FlatStyle=FlatStyle.Flat;start.FlatAppearance.BorderSize=0;
         start.Click+=(s,e)=>{if(relay!=null || retrying) Disconnect();else if(String.IsNullOrWhiteSpace(urls[0].Text)){pages.SelectedIndex=1;urls[0].Focus();}else Connect();};
+        var activity=Page("Подключения");
+        activity.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0));
+        activity.Controls.Add(Copy("Подключения к ИИ",true));
+        connections=new ConnectionPane(activity,surface,ink);
+        EventHandler openFlows=(s,e)=>{pages.SelectedIndex=2;nextFlows=DateTime.MinValue;};
+        home.Controls.Add(ActionButton("Подключения к ИИ",openFlows));
         var actions=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft,WrapContents=true};
         checkAddress.Text="Проверить адрес";checkAddress.AutoSize=true;checkAddress.FlatStyle=FlatStyle.Flat;
         checkAddress.BackColor=accent;checkAddress.ForeColor=ink;checkAddress.FlatAppearance.BorderSize=0;checkAddress.Padding=new Padding(8,4,8,4);
@@ -261,7 +273,7 @@ sealed class GuardWindow : Form {
         ShowIdle("Выключен");
         tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWindow();};
         var menu=new ContextMenuStrip();menu.Items.Add("Открыть",null,(s,e)=>ShowWindow());
-        menu.Items.Add("Выход",null,(s,e)=>{quitting=true;Close();});tray.ContextMenuStrip=menu;
+        menu.Items.Add("Подключения к ИИ",(Image)null,(s,e)=>{ShowWindow();openFlows(s,e);});menu.Items.Add("Выход",null,(s,e)=>{quitting=true;Close();});tray.ContextMenuStrip=menu;
         FormClosing+=(s,e)=>{if(!quitting && e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();return;}
             if(ProxyOnly && !ReleaseDomains()){quitting=false;e.Cancel=true;ShowWindow();}};
         FormClosed+=(s,e)=>{timer.Stop();Stop();tray.Dispose();detail.Dispose();};
@@ -272,7 +284,7 @@ sealed class GuardWindow : Form {
                 byte[] bytes=ProtectedData.Unprotect(File.ReadAllBytes(saved),null,DataProtectionScope.CurrentUser);
                 var r=json.Deserialize<Route[]>(Encoding.UTF8.GetString(bytes));
                 if(r.Length!=4)throw new InvalidDataException();
-                for(int i=0;i<4;i++){urls[i].Text=r[i].Address;pins[i]=r[i].IP;}
+                for(int i=0;i<4;i++){urls[i].Text=r[i].Address;pins[i]=r[i].IP;reveal[i].Checked=String.IsNullOrEmpty(r[i].Address);}
                 allowMismatch.Checked=r[0].AllowGoogleCountryMismatch;protection.Checked=!r[0].ProxyOnly;
                 if(!File.Exists(Path.Combine(dataDirectory,"paused")))Shown+=(s,e)=>Connect();
             }catch{State("Не удалось прочитать сохранённые прокси.",false);}
@@ -416,7 +428,7 @@ sealed class GuardWindow : Form {
             try{relay.StandardInput.Close();if(!relay.WaitForExit(1200))relay.Kill();}catch(InvalidOperationException){}
             relay.Dispose();relay=null;
         }
-        relayReady=false;checkAddress.Enabled=true;checkAddress.Text="Проверить адрес";next=null;leases=null;ShowIdle("Выключен");Inputs(true);start.Text="Подключить";State("Откройте настройки, чтобы подключить прокси.",false);
+        connections.Update(null,false);relayReady=false;checkAddress.Enabled=true;checkAddress.Text="Проверить адрес";next=null;leases=null;ShowIdle("Выключен");Inputs(true);start.Text="Подключить";State("Откройте настройки, чтобы подключить прокси.",false);
     }
     void RelayEnded(){
         bool recover=relayReady || retrying;
@@ -429,6 +441,14 @@ sealed class GuardWindow : Form {
         Inputs(false);start.Text="Отключить прокси";
     }
     void Poll(){
+        if(pages.SelectedIndex==2 && !smokeMode){
+            connections.CheckOutside();
+            if(relayReady && DateTime.UtcNow>=nextFlows){
+                nextFlows=DateTime.UtcNow.AddSeconds(2);
+                try{relay.StandardInput.WriteLine("activity");relay.StandardInput.Flush();}
+                catch(IOException){nextFlows=DateTime.UtcNow.AddSeconds(5);}
+            }else if(!relayReady)connections.Update(null,false);
+        }
         if(routingSetup || checkingProxy)return;
         if(relay==null){
             if(retrying && DateTime.UtcNow>=retryAt){
@@ -454,6 +474,11 @@ sealed class GuardWindow : Form {
                         State("Адрес можно проверить вручную.",false);
                         for(int i=0;i<outcomes.Length;i++)outcomes[i].Text=String.IsNullOrWhiteSpace(urls[i+1].Text)?"Общий прокси":"Свой прокси";
                     }else ShowIdle("Проверяем…");
+                    return;
+                }
+                if(line.StartsWith("FLOWS ",StringComparison.Ordinal)){
+                    try{connections.Update(json.Deserialize<ConnectionPane.Flow[]>(line.Substring(6)),true);}
+                    catch(ArgumentException){connections.Update(null,relayReady);}
                     return;
                 }
                 if(line=="CHECKED"){checkAddress.Enabled=true;checkAddress.Text="Проверить адрес";return;}
@@ -512,7 +537,13 @@ sealed class GuardWindow : Form {
         if(pins[1]!=null)return 26;
         urls[1].Text="";
         pages.SelectedIndex=1;ShowRouteOptions(false);
+        urls[0].Text="demo:example@proxy.example:8000";
+        if(urls[0].UseSystemPasswordChar)return 27;
+        reveal[0].Checked=false;if(!urls[0].UseSystemPasswordChar)return 28;reveal[0].Checked=true;
         pages.SelectedTab.PerformLayout();SaveSmokeImage("03-settings.png");
+        pages.SelectedIndex=2;
+        connections.Update(new[]{new ConnectionPane.Flow{Domain="api.openai.com",Status="active"},new ConnectionPane.Flow{Domain="api.anthropic.com",Status="blocked",At=DateTimeOffset.UtcNow.ToUnixTimeSeconds()}},true);
+        pages.SelectedTab.PerformLayout();SaveSmokeImage("05-connections.png");
         pages.SelectedIndex=0;
         leases=json.Deserialize<Dictionary<string,Reading>>("{\"Antigravity\":{\"Until\":0,\"Reason\":\"Google: NL, IPinfo: DE\"},\"Claude\":{\"Until\":201}}");
         RenderReadings(200);

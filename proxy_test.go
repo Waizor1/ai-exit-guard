@@ -37,7 +37,7 @@ func TestSelectiveTunnel(t *testing.T) {
 			spec.gate = &relayGate{}
 			spec.gate.set(time.Now().Add(time.Minute))
 			defer spec.gate.set(time.Time{})
-			spec.flows = &liveFlows{peers: make(map[string]string)}
+			spec.flows = &liveFlows{peers: make(map[string]string), recordEvents: true}
 			done := make(chan bool, 1)
 			go func() {
 				c, err := ln.Accept()
@@ -79,6 +79,9 @@ func TestSelectiveTunnel(t *testing.T) {
 			response, e := http.ReadResponse(r, &http.Request{Method: "CONNECT"})
 			if e != nil || response.StatusCode != 200 {
 				t.Fatalf("connect: %v %v", response, e)
+			}
+			if rows := spec.flows.desktopSnapshot(); len(rows) != 1 || rows[0].Status != "active" || rows[0].Domain != "api.openai.com" {
+				t.Fatal("missing active desktop flow")
 			}
 			if got := spec.flows.snapshot()[c.LocalAddr().String()]; got != "api.openai.com" {
 				t.Fatalf("active tunnel not attributed: %q", got)

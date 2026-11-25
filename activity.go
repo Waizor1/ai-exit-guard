@@ -21,7 +21,9 @@ import (
 
 type liveFlows struct {
 	sync.Mutex
-	peers map[string]string
+	peers        map[string]string
+	recent       []flowEvent
+	recordEvents bool
 }
 
 func (f *liveFlows) track(peer, host string) func() {
@@ -33,6 +35,40 @@ func (f *liveFlows) track(peer, host string) func() {
 	f.Unlock()
 	return func() { f.Lock(); delete(f.peers, peer); f.Unlock() }
 }
+
+type flowEvent struct {
+	Domain string
+	Status string
+	At     int64
+}
+
+func (f *liveFlows) record(host, status string) {
+	if f == nil || !f.recordEvents || !aiHost(host) {
+		return
+	}
+	f.Lock()
+	defer f.Unlock()
+	if len(f.recent) == 64 {
+		copy(f.recent, f.recent[1:])
+		f.recent = f.recent[:63]
+	}
+	f.recent = append(f.recent, flowEvent{host, status, time.Now().Unix()})
+}
+
+func (f *liveFlows) desktopSnapshot() []flowEvent {
+	f.Lock()
+	defer f.Unlock()
+	rows := make([]flowEvent, 0, len(f.peers)+len(f.recent))
+	for _, host := range f.peers {
+		rows = append(rows, flowEvent{Domain: host, Status: "active"})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Domain < rows[j].Domain })
+	for i := len(f.recent) - 1; i >= 0; i-- {
+		rows = append(rows, f.recent[i])
+	}
+	return rows
+}
+
 func (f *liveFlows) snapshot() map[string]string {
 	f.Lock()
 	defer f.Unlock()

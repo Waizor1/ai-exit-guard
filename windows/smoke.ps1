@@ -40,6 +40,12 @@ if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable
             $stream.Write($request,0,$request.Length)
             $reader=New-Object IO.StreamReader($stream)
             if($reader.ReadLine() -notmatch '^HTTP/1\.1 502'){throw 'Wrong upstream failure in proxy-only mode'}
+            $p.StandardInput.WriteLine("activity");$p.StandardInput.Flush()
+            $report=$p.StandardOutput.ReadLineAsync()
+            if(!$report.Wait(5000) -or !$report.Result.StartsWith("FLOWS ")){throw 'Activity response missing'}
+            $events=ConvertFrom-Json $report.Result.Substring(6)
+            if(!($events | Where-Object {$_.Domain -eq "api.openai.com" -and $_.Status -eq "failed"})){throw 'Failed tunnel absent from activity'}
+
         }finally{$tcp.Dispose()}
     }finally{$p.StandardInput.Close();if(!$p.WaitForExit(10000)){$p.Kill();throw 'Proxy-only relay failed to stop'}}
     # Exercise the actual OS resolver transaction on this disposable Windows host.

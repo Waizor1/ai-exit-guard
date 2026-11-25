@@ -9,7 +9,7 @@ static class DomainLock {
     const string Begin="# BEGIN AI Exit Guard model hosts", End="# END AI Exit Guard model hosts";
     // Latin-1 provides byte-for-byte preservation for unrelated lines, including an existing UTF-8 BOM.
     static readonly Encoding Raw=Encoding.GetEncoding(28591);
-    static string[] Names(){
+    internal static string[] Names(){
         using(var reader=new StreamReader(Assembly.GetExecutingAssembly().GetManifestResourceStream("guard-hosts"))){
             return reader.ReadToEnd().Split(new[]{'\r','\n'},StringSplitOptions.RemoveEmptyEntries);
         }

@@ -224,11 +224,13 @@ func (s proxySpec) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.gate == nil {
+		s.flows.record(host, "blocked")
 		http.Error(w, "Guard is waiting for a check", http.StatusServiceUnavailable)
 		return
 	}
 	window := s.gate.current()
 	if window == nil {
+		s.flows.record(host, "blocked")
 		http.Error(w, "Guard has paused AI connections", http.StatusServiceUnavailable)
 		return
 	}
@@ -244,14 +246,17 @@ func (s proxySpec) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if e != nil {
 		if window.Err() != nil {
+			s.flows.record(host, "blocked")
 			http.Error(w, "Guard has paused AI connections", http.StatusServiceUnavailable)
 			return
 		}
+		s.flows.record(host, "failed")
 		http.Error(w, "AI proxy unavailable", 502)
 		return
 	}
 	defer peer.Close()
 	if !s.gate.attach(window, peer) {
+		s.flows.record(host, "blocked")
 		http.Error(w, "Guard has paused AI connections", http.StatusServiceUnavailable)
 		return
 	}
@@ -263,6 +268,7 @@ func (s proxySpec) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 	release := s.flows.track(r.RemoteAddr, host)
 	defer release()
+	defer s.flows.record(host, "finished")
 	if _, e = buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); e != nil {
 		return
 	}

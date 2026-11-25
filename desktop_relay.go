@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -183,6 +184,18 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 	c.report(output, state)
 }
 
+// Status updates and connection snapshots share a private, line-oriented pipe.
+type desktopOutput struct {
+	sync.Mutex
+	writer io.Writer
+}
+
+func (o *desktopOutput) Write(b []byte) (int, error) {
+	o.Lock()
+	defer o.Unlock()
+	return o.writer.Write(b)
+}
+
 func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int {
 	sc := bufio.NewScanner(input)
 	var c desktopConfig
@@ -210,7 +223,8 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 		}
 		go func() { defer cancel(); _ = serveIngress(ctx, local, localProxy) }()
 	}
-	relay := &serviceRelay{}
+	output = &desktopOutput{writer: output}
+	relay := &serviceRelay{activity: &liveFlows{peers: map[string]string{}, recordEvents: true}}
 	relay.configure(c.proxyPlan)
 	defer relay.close()
 	srv := &http.Server{Handler: relay, ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 32768}
@@ -219,7 +233,10 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 	check := make(chan struct{}, 1)
 	go func() {
 		for sc.Scan() {
-			if sc.Text() == "check" {
+			if sc.Text() == "activity" {
+				data, _ := json.Marshal(relay.activity.desktopSnapshot())
+				fmt.Fprintf(output, "FLOWS %s\n", data)
+			} else if sc.Text() == "check" {
 				select {
 				case check <- struct{}{}:
 				default:
