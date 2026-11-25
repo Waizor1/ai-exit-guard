@@ -457,6 +457,6 @@ precondition(!client.ready && client.expected.isEmpty && !client.routeWarning.is
 print("PASS: fresh proxy-only connect, domain ownership, quit, restore, disconnect and conflict rollback")
 print("PASS: three tray verdicts, thresholds, mixed routes, region eligibility and expiry, split exits, address rotation, stale data, refresh, network and proxy recovery")
 """)
-    subprocess.run(['xcrun','swiftc',str(driver),str(ROOT/'MCPDNS.swift'),str(mock_rules),str(mock_client),str(ROOT/'Panel.swift'),str(mock_proxy),str(ROOT/'RuntimePAC.swift'),str(ROOT/'Connections.swift'),
+    subprocess.run(['xcrun','swiftc',str(driver),str(ROOT/'MCPDNS.swift'),str(ROOT/'SystemDNS.swift'),str(mock_rules),str(mock_client),str(ROOT/'Panel.swift'),str(mock_proxy),str(ROOT/'RuntimePAC.swift'),str(ROOT/'Connections.swift'),
                     str(ROOT/'Recommendation.swift'),str(ROOT/'ExitHistory.swift'),'-o',str(executable)],check=True)
     subprocess.run([str(executable)],check=True)

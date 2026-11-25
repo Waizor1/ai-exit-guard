@@ -53,6 +53,17 @@ struct GuardPanel: View {
                 Button("Общий прокси"){model.proxySettings=true}.buttonStyle(.link)
                 setting("bell","Уведомления",model.notificationState,model.notificationState=="Разрешены" ? "Тест" : model.notificationState=="Выключены" ? "Настройки" : "Разрешить",model.notifications)
                 setting("power","Запуск при входе",model.loginState,model.loginState=="Выключен" ? "Включить" : "Настройки",model.login)
+                HStack(alignment:.top,spacing:10) {
+                    Image(systemName:"lock.shield").frame(width:24).padding(.top,2)
+                    VStack(alignment:.leading,spacing:2) {
+                        Text("Защищённый DNS (DoT)")
+                        Text(model.systemDNSState.label).font(.caption).foregroundStyle(.secondary)
+                        Text("Обходит сбоящий DNS VPN и провайдера через DNS-over-TLS.").font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    }
+                    Spacer(minLength:4)
+                    Toggle("Защищённый DNS (DoT)",isOn:Binding(get:{ model.systemDNSEnabled },set:{ model.setSystemDNSEnabled($0) }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }.padding(.vertical,6)
                 Button("Активные подключения"){model.showConnections=true}.buttonStyle(.link)
                 if !model.proxy.managesDomains && model.killSwitch.state != .off {
                     KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)

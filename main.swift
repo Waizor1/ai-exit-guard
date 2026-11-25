@@ -43,6 +43,11 @@ struct Reading: Decodable, Equatable {
 final class Monitor: NSObject, ObservableObject {
     @Published var repairedMCPHosts: [String] = []
     var suspendMCPDNS: () -> Void = {}
+    @Published var systemDNSEnabled: Bool = {
+        UserDefaults.standard.object(forKey: "systemDNS") as? Bool ?? true
+    }()
+    @Published var systemDNSState: SystemDNSState = .off
+    var setSystemDNSEnabled: (Bool) -> Void = { _ in }
     @Published var rows = [String:Reading]()
     @Published var running = false
     @Published var note = ""
@@ -452,6 +457,7 @@ final class StatusPanel: NSPanel {
 final class GuardDelegate: NSObject, NSApplicationDelegate {
     let model = Monitor()
     private let mcpDNS = MCPDNSMonitor()
+    private let systemDNS = SystemDNSMonitor()
     let path = NWPathMonitor()
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let panel = StatusPanel(contentRect:.zero, styleMask:[.borderless,.nonactivatingPanel], backing:.buffered, defer:false)
@@ -494,6 +500,17 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         }
         mcpDNS.changed = { [weak self] hosts in self?.model.repairedMCPHosts = hosts }
         model.suspendMCPDNS = { [weak self] in self?.mcpDNS.suspend() }
+        systemDNS.changed = { [weak self] state in self?.model.systemDNSState = state }
+        model.setSystemDNSEnabled = { [weak self] enabled in
+            guard let self else { return }
+            UserDefaults.standard.set(enabled, forKey: "systemDNS")
+            self.model.systemDNSEnabled = enabled
+            if enabled && self.model.online {
+                self.systemDNS.start()
+            } else {
+                self.systemDNS.stop()
+            }
+        }
         NSApp.setActivationPolicy(.accessory)
         model.proxy.routeChanged={ [weak self] in self?.recheck() }
         model.proxy.profileChanged={ [weak self] _ in
@@ -541,6 +558,8 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
                 self.signature=key;self.model.online=p.status == .satisfied
                 self.mcpDNS.stop()
                 if self.model.online && !self.model.proxy.paused { self.mcpDNS.start() }
+                self.systemDNS.stop()
+                if self.model.online && self.model.systemDNSEnabled { self.systemDNS.start() }
                 self.model.killSwitch.refresh()
                 self.recheck(keepPinned:true)
             }
@@ -576,10 +595,12 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         pending=work
         DispatchQueue.main.asyncAfter(deadline:.now()+0.7,execute:work)
     }
-    @objc func sleepDNS(){ mcpDNS.stop() }
+    @objc func sleepDNS(){ mcpDNS.stop(); systemDNS.stop() }
     @objc func wake(){
         mcpDNS.stop()
         if model.online && !model.proxy.paused { mcpDNS.start() }
+        systemDNS.stop()
+        if model.online && model.systemDNSEnabled { systemDNS.start() }
         recheck()
     }
     @objc func screenChanged(){
@@ -693,6 +714,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationWillTerminate(_ n:Notification){
         mcpDNS.stop()
+        systemDNS.stop()
         maintainMonitoring(false)
         periodic?.invalidate();pending?.cancel();path.cancel();model.invalidate("");model.proxy.shutdown()
         if let outside=outside{NSEvent.removeMonitor(outside)}

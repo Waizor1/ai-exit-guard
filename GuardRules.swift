@@ -109,6 +109,9 @@ print "changed\n";
     func publishDNS(_ hosts: [String], udp: FileHandle, tcp: FileHandle, withReply reply: @escaping (Bool) -> Void)
     func renewDNS(withReply reply: @escaping (Bool) -> Void)
     func clearDNS(withReply reply: @escaping (Bool) -> Void)
+    func publishSystemDNS(_ udp: FileHandle, tcp: FileHandle, withReply reply: @escaping (Bool) -> Void)
+    func renewSystemDNS(withReply reply: @escaping (Bool) -> Void)
+    func clearSystemDNS(withReply reply: @escaping (Bool) -> Void)
     func ping(withReply reply: @escaping (Bool) -> Void)
 }
 

@@ -128,6 +128,22 @@ assert(call { other.publishDNS(["mcp.stripe.com"], udp: u2, tcp: t2, withReply: 
 assert(call(other.renewDNS))
 Thread.sleep(forTimeInterval: 3.5)
 assert(values().isEmpty && !call(other.renewDNS))
+// Verify system-wide DoT DNS lease: single owner, renewal, clear, and expiry.
+let (su1, st1, sp1) = sockets()
+let (su2, st2, _) = sockets()
+assert(call { other.publishSystemDNS(su1, tcp: st1, withReply: $0) })
+let sysKey = values().keys.first!
+assert(values()[sysKey] == ["ServerAddresses": ["127.0.0.1"], "ServerPort": Int(sp1),
+                            "SearchOrder": 50000,
+                            "SupplementalMatchDomains": [""], "SupplementalMatchDomainsNoSearch": 1])
+assert(call(other.renewSystemDNS))
+let (thirdClient, third) = connect()
+assert(!call { third.publishSystemDNS(su2, tcp: st2, withReply: $0) })
+assert(call(other.clearSystemDNS) && values().isEmpty)
+assert(call { third.publishSystemDNS(su2, tcp: st2, withReply: $0) })
+thirdClient.invalidate()
+for _ in 0..<100 where !values().isEmpty { usleep(10000) }
+assert(values().isEmpty)
 otherClient.invalidate()
 print("Passed XPC publication, host replacement, protected domains, socket ownership, peer isolation, disconnect and expiry")
 

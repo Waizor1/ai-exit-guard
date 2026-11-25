@@ -528,6 +528,8 @@ func main() {
 		switch os.Args[1] {
 		case "mcp-dns":
 			os.Exit(runMCPDNS(ctx))
+		case "system-dns":
+			os.Exit(runSystemDNS(ctx))
 		case "proxy-profile-check":
 			os.Exit(profileCheckCommand(ctx, os.Stdin, os.Stdout))
 		case "filter-run", "filter-on", "filter-off", "filter-refresh", "filter-pause", "filter-resume":

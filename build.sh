@@ -49,7 +49,7 @@ for arch in arm64 x86_64; do
  CGO_ENABLED=0 GOOS=darwin GOARCH=$goarch go build -trimpath -ldflags="-s -w" -o "$stage/guard-$arch" .
  xcrun swiftc -O -target "$arch-apple-macos13.0" GuardRules.swift "$stage/MCPCatalog.swift" packaging/helper/main.swift -o "$stage/rules-$arch"
  xcrun swiftc -O -target "$arch-apple-macos13.0" packaging/TraceProbe.swift -o "$stage/trace-$arch"
- xcrun swiftc -O -target "$arch-apple-macos13.0" main.swift MCPDNS.swift GuardRules.swift KillSwitch.swift Connections.swift RuntimePAC.swift ProxyClient.swift Panel.swift Recommendation.swift ExitHistory.swift -o "$stage/menu-$arch"
+ xcrun swiftc -O -target "$arch-apple-macos13.0" main.swift MCPDNS.swift SystemDNS.swift GuardRules.swift KillSwitch.swift Connections.swift RuntimePAC.swift ProxyClient.swift Panel.swift Recommendation.swift ExitHistory.swift -o "$stage/menu-$arch"
 done
 lipo -create "$stage"/rules-* -output "$daemon"
 lipo -create "$stage"/trace-* -output "$app/Contents/Helpers/TraceProbe"

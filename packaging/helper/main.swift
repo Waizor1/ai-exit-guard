@@ -75,6 +75,18 @@ private final class DNSLease {
         store = session
     }
 
+    init?(systemPort port: UInt16, udp: FileHandle, tcp: FileHandle) {
+        self.names = []
+        self.udp = udp
+        self.tcp = tcp
+        value = [kSCPropNetDNSServerAddresses: ["127.0.0.1"], kSCPropNetDNSServerPort: Int(port),
+                 kSCPropNetDNSSearchOrder: 50000,
+                 kSCPropNetDNSSupplementalMatchDomains: [""], "SupplementalMatchDomainsNoSearch": 1]
+        guard let session = SCDynamicStoreCreate(nil, guardServiceName as CFString, nil, nil),
+              SCDynamicStoreAddTemporaryValue(session, key as CFString, value) else { return nil }
+        store = session
+    }
+
     var isPublished: Bool {
         guard let store else { return false }
         return value.isEqual(SCDynamicStoreCopyValue(store, key as CFString))
@@ -96,6 +108,9 @@ private final class RuleClient: NSObject, GuardRuleControl {
     private var lease: DNSLease?
     private var expiration: ContinuousClock.Instant?
     private var timer: DispatchSourceTimer?
+    private var systemLease: DNSLease?
+    private var systemExpiration: ContinuousClock.Instant?
+    private var systemTimer: DispatchSourceTimer?
     private var ended = false
 
     init(_ service: RuleService, _ peer: NSXPCConnection) {
@@ -107,6 +122,7 @@ private final class RuleClient: NSObject, GuardRuleControl {
         service.dns.async {
             self.ended = true
             self.clear()
+            self.clearSystem()
         }
     }
 
@@ -116,6 +132,16 @@ private final class RuleClient: NSObject, GuardRuleControl {
         expiration = nil
         if let lease { service.claimed.subtract(lease.names) }
         lease = nil
+    }
+
+    private func clearSystem() {
+        systemTimer?.cancel()
+        systemTimer = nil
+        systemExpiration = nil
+        if service.systemDNSOwner == ObjectIdentifier(self) {
+            service.systemDNSOwner = nil
+        }
+        systemLease = nil
     }
 
     private func refresh() {
@@ -130,6 +156,20 @@ private final class RuleClient: NSObject, GuardRuleControl {
             // leases immediately after wake without depending on the wall clock.
             source.schedule(deadline: .now() + 1, repeating: .seconds(1), leeway: .milliseconds(100))
             timer = source
+            source.activate()
+        }
+    }
+
+    private func refreshSystem() {
+        systemExpiration = ContinuousClock.now.advanced(by: .seconds(60))
+        if systemTimer == nil {
+            let source = DispatchSource.makeTimerSource(queue: service.dns)
+            source.setEventHandler { [weak self] in
+                guard let self, let expiry = self.systemExpiration, ContinuousClock.now >= expiry else { return }
+                self.clearSystem()
+            }
+            source.schedule(deadline: .now() + 1, repeating: .seconds(1), leeway: .milliseconds(100))
+            systemTimer = source
             source.activate()
         }
     }
@@ -168,6 +208,37 @@ private final class RuleClient: NSObject, GuardRuleControl {
         service.dns.async { self.clear(); reply(true) }
     }
 
+    func publishSystemDNS(_ udp: FileHandle, tcp: FileHandle, withReply reply: @escaping (Bool) -> Void) {
+        service.dns.async {
+            let me = ObjectIdentifier(self)
+            guard !self.ended, self.service.isConsoleUser(self.peer),
+                  self.service.systemDNSOwner == nil || self.service.systemDNSOwner == me,
+                  let port = DNSLeasePolicy.port(udp, type: SOCK_DGRAM),
+                  DNSLeasePolicy.port(tcp, type: SOCK_STREAM) == port else { reply(false); return }
+            self.clearSystem()
+            guard let lease = DNSLease(systemPort: port, udp: udp, tcp: tcp) else { reply(false); return }
+            self.systemLease = lease
+            self.service.systemDNSOwner = me
+            self.refreshSystem()
+            reply(true)
+        }
+    }
+
+    func renewSystemDNS(withReply reply: @escaping (Bool) -> Void) {
+        service.dns.async {
+            guard !self.ended, self.service.isConsoleUser(self.peer), let expiration = self.systemExpiration,
+                  ContinuousClock.now < expiration, self.systemLease?.isPublished == true else {
+                self.clearSystem(); reply(false); return
+            }
+            self.refreshSystem()
+            reply(true)
+        }
+    }
+
+    func clearSystemDNS(withReply reply: @escaping (Bool) -> Void) {
+        service.dns.async { self.clearSystem(); reply(true) }
+    }
+
     func ping(withReply reply: @escaping (Bool) -> Void) {
         reply(service.isConsoleUser(peer))
     }
@@ -181,6 +252,7 @@ private final class RuleClient: NSObject, GuardRuleControl {
 final class RuleService: NSObject, NSXPCListenerDelegate {
     fileprivate let dns = DispatchQueue(label: "local.aiexitguard.rules.dns")
     fileprivate var claimed = Set<String>()
+    fileprivate var systemDNSOwner: ObjectIdentifier?
     private let writes = DispatchQueue(label: "local.aiexitguard.rules.write")
 
     // Accessed only on the serial writes queue.
