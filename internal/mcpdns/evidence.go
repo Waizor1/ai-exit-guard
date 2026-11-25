@@ -230,7 +230,7 @@ func (t *Tracker) scan(ctx context.Context, candidates []string, excluded func(s
 		const workers = 5
 		// Reserve time for every queued host even if all first-wave paths stall.
 		budget := time.Duration(0)
-		if deadline, ok := ctx.Deadline(); ok && len(hosts) > 0 {
+		if deadline, ok := ctx.Deadline(); ok && len(hosts) > workers {
 			waves := (len(hosts) + workers - 1) / workers
 			budget = max(time.Nanosecond, time.Until(deadline)/time.Duration(waves))
 		}

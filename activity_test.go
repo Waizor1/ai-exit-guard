@@ -11,12 +11,20 @@ import (
 func TestActivityCorrelatesActualTunnelAndSeparatesWorker(t *testing.T) {
 	ps := processTable("  10  1 /Applications/T3 Code.app/Contents/MacOS/T3 Code\n11 10 codex\n12 1 /Applications/Browser.app/Contents/MacOS/Browser")
 	peers := map[string]string{"127.0.0.1:51000": "api.openai.com"}
-	raw := "p10\nn127.0.0.1:51000->127.0.0.1:39178\np11\nn198.18.0.1:51012->198.18.1.1:443\nn198.18.0.1:51013->198.18.1.1:443\nn127.0.0.1:62000->127.0.0.1:7801\np12\nn127.0.0.1:51005->127.0.0.1:39178"
-	rows := attribute(raw, ps, peers, map[netip.Addr][]string{netip.MustParseAddr("198.18.1.1"): {"chatgpt.com", "claude.ai"}})
-	if len(rows) != 3 {
+	raw := "p10\nn127.0.0.1:51000->127.0.0.1:39178\np11\nn198.18.0.1:51012->198.18.1.1:443\nn198.18.0.1:51013->198.18.1.1:443\nn127.0.0.1:62000->127.0.0.1:7801\nn127.0.0.1:62001->127.0.0.2:443\np12\nn127.0.0.1:51005->127.0.0.1:39178"
+	rows := attribute(raw, ps, peers, map[netip.Addr][]string{
+		netip.MustParseAddr("198.18.1.1"): {"chatgpt.com", "claude.ai"},
+		netip.MustParseAddr("127.0.0.2"):  {"chatgpt.com", "claude.ai"},
+	})
+	if len(rows) != 4 {
 		t.Fatal(rows)
 	}
-	want := []activityRow{{"Browser", "", "listener", 1}, {"T3 Code", "api.openai.com", "guard", 1}, {"T3 Code · codex", "chatgpt.com, claude.ai", "outside", 2}}
+	want := []activityRow{
+		{"Browser", "", "listener", 1},
+		{"T3 Code", "api.openai.com", "guard", 1},
+		{"T3 Code · codex", "chatgpt.com, claude.ai", "outside", 2},
+		{"T3 Code · codex", "", "listener", 1},
+	}
 	for i := range rows {
 		if rows[i] != want[i] {
 			t.Fatal(rows)

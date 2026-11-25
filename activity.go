@@ -197,9 +197,11 @@ func attribute(raw string, table map[int]processInfo, peers map[string]string, a
 			} else {
 				route = "listener"
 			}
+		} else if dst == net.JoinHostPort(ingressIP, "443") {
+			route = "listener"
 		} else {
 			dstAddr, e := netip.ParseAddrPort(dst)
-			if e != nil || dstAddr.Port() != 443 {
+			if e != nil || dstAddr.Port() != 443 || dstAddr.Addr().Unmap().IsLoopback() {
 				continue
 			}
 			names := addresses[dstAddr.Addr().Unmap()]
