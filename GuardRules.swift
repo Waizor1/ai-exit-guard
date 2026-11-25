@@ -106,7 +106,18 @@ print "changed\n";
 
 @objc(GuardRuleControl) protocol GuardRuleControl {
     func setProtection(_ enabled: Bool, withReply reply: @escaping (Bool) -> Void)
+    func publishDNS(_ hosts: [String], udp: FileHandle, tcp: FileHandle, withReply reply: @escaping (Bool) -> Void)
+    func renewDNS(withReply reply: @escaping (Bool) -> Void)
+    func clearDNS(withReply reply: @escaping (Bool) -> Void)
     func ping(withReply reply: @escaping (Bool) -> Void)
+}
+
+func guardRuleInterface() -> NSXPCInterface {
+    let interface = NSXPCInterface(with: GuardRuleControl.self)
+    let classes = NSSet(objects: NSArray.self, NSString.self) as! Set<AnyHashable>
+    interface.setClasses(classes, for: #selector(GuardRuleControl.publishDNS(_:udp:tcp:withReply:)),
+                         argumentIndex: 0, ofReply: false)
+    return interface
 }
 
 let guardServiceName = "local.aiexitguard.rules"
