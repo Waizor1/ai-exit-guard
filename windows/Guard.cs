@@ -38,6 +38,7 @@ sealed class GuardWindow : Form {
     readonly Color surface=Color.FromArgb(43,42,42), card=Color.FromArgb(55,54,54), accent=Color.FromArgb(0,112,232);
     readonly Label[] reasons=new Label[3];
     readonly Button checkAddress=new SoftButton();
+    readonly Label lastResult=new Label{Text="Адрес ещё не проверен",AutoSize=true,Anchor=AnchorStyles.Left};
     readonly Label modeHint=new Label {AutoSize=true,Dock=DockStyle.Fill};
     Button routeOptions;
     TableLayoutPanel optionalRoutes;
@@ -63,12 +64,46 @@ sealed class GuardWindow : Form {
     sealed class RoundedCard : TableLayoutPanel {
         protected override void OnPaintBackground(PaintEventArgs e){PaintSurface(this,e.Graphics,BackColor,14);}
     }
+    enum Mark { Shield, Sun, Chat, Stars }
+    sealed class Glyph : Control {
+        readonly Mark mark;
+        public Glyph(Mark mark,Color color){
+            this.mark=mark;ForeColor=color;Size=new Size(23,23);Margin=new Padding(2,6,7,0);
+            TabStop=false;AccessibleRole=AccessibleRole.None;
+        }
+        protected override void OnPaint(PaintEventArgs e){
+            base.OnPaint(e);
+            Graphics g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;
+            float scale=Math.Min(ClientSize.Width,ClientSize.Height)/24f;g.ScaleTransform(scale,scale);
+            using(var pen=new Pen(ForeColor,1.7f))
+            using(var brush=new SolidBrush(ForeColor)){
+                if(mark==Mark.Shield){
+                    g.DrawPolygon(pen,new[]{new Point(12,2),new Point(21,6),new Point(20,14),new Point(17,18),new Point(12,22),new Point(7,18),new Point(4,14),new Point(3,6)});
+                    g.DrawLines(pen,new[]{new Point(7,11),new Point(11,15),new Point(17,8)});
+                }else if(mark==Mark.Sun){
+                    g.FillEllipse(brush,7,7,10,10);
+                    for(int i=0;i<8;i++){
+                        double a=i*Math.PI/4;float x=(float)Math.Cos(a),y=(float)Math.Sin(a);
+                        g.DrawLine(pen,12+7*x,12+7*y,12+10*x,12+10*y);
+                    }
+                }else if(mark==Mark.Chat){
+                    g.DrawEllipse(pen,2,3,15,11);g.DrawLine(pen,6,13,4,17);
+                    g.FillEllipse(brush,8,9,14,10);
+                    g.FillPolygon(brush,new[]{new Point(15,17),new Point(21,21),new Point(20,16)});
+                }else{
+                    g.FillPolygon(brush,new[]{new Point(10,4),new Point(12,11),new Point(19,13),new Point(12,15),new Point(10,22),new Point(8,15),new Point(1,13),new Point(8,11)});
+                    g.FillPolygon(brush,new[]{new Point(18,1),new Point(19,4),new Point(23,6),new Point(19,7),new Point(18,11),new Point(17,7),new Point(14,6),new Point(17,4)});
+                }
+            }
+        }
+    }
     sealed class SoftButton : Button {
         protected override void OnPaint(PaintEventArgs e){
             bool hover=Enabled && ClientRectangle.Contains(PointToClient(MousePosition));
-            PaintSurface(this,e.Graphics,hover?ControlPaint.Light(BackColor,.12f):BackColor,8);
+            Color fill=Enabled?BackColor:Color.FromArgb(64,63,63);
+            PaintSurface(this,e.Graphics,hover?ControlPaint.Light(fill,.12f):fill,8);
             var alignment=TextAlign==ContentAlignment.MiddleLeft?TextFormatFlags.Left:TextFormatFlags.HorizontalCenter;
-            TextRenderer.DrawText(e.Graphics,Text,Font,Rectangle.Inflate(ClientRectangle,-Padding.Left,0),Enabled?ForeColor:SystemColors.GrayText,alignment|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
+            TextRenderer.DrawText(e.Graphics,Text,Font,Rectangle.Inflate(ClientRectangle,-Padding.Left,0),Enabled?ForeColor:Color.Silver,alignment|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
             if(Focused && ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-4,-4),ForeColor,BackColor);
         }
     }
@@ -110,6 +145,7 @@ sealed class GuardWindow : Form {
         var identity=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,Margin=Padding.Empty,WrapContents=true};
         var name=Copy("AI Exit Guard",true);
         name.Margin=new Padding(2,8,4,4);
+        if(pages.TabCount==1)identity.Controls.Add(new Glyph(Mark.Shield,ink));
         identity.Controls.Add(name);
         var version=Copy(Application.ProductVersion,false);version.Name="ProductVersion";
         version.AccessibleName="Версия "+version.Text;version.Margin=new Padding(2,8,2,4);
@@ -271,36 +307,39 @@ sealed class GuardWindow : Form {
         ownedDomains=Path.Combine(dataDirectory,"managed-domains");
         protection.Checked=false;
         saved=Path.Combine(dataDirectory,"routes.bin");
-        Text="AI Exit Guard"; Font=new Font("Segoe UI",10F);
+        Text="AI Exit Guard"; Font=new Font("Segoe UI",11F);
         AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
-        ClientSize=new Size(450,580);MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
+        ClientSize=new Size(480,Math.Min(730,Screen.FromControl(this).WorkingArea.Height-70));MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
         pages.Appearance=TabAppearance.FlatButtons;pages.SizeMode=TabSizeMode.Fixed;pages.ItemSize=new Size(0,1);pages.TabStop=false;
         Controls.Add(pages);
         var home=Page("Главная");var settings=Page("Настройки");
         summary=Card();
         verdict.Font=new Font(Font.FontFamily,19,FontStyle.Bold);verdict.Margin=new Padding(2,7,2,3);summary.Controls.Add(verdict);
         status.AccessibleName="Причина текущего состояния";status.Dock=DockStyle.Fill;status.Margin=new Padding(2,2,2,8);status.ForeColor=muted;summary.Controls.Add(status);home.Controls.Add(summary);
-        var results=Card();results.ColumnCount=2;
-        results.ColumnStyles[0].Width=45;results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,55));
+        var results=Card();results.ColumnCount=3;results.ColumnStyles.Clear();
+        results.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,46));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,54));
         var services=Copy("Сервисы",true);services.Margin=new Padding(4,2,4,4);services.ForeColor=muted;
-        results.Controls.Add(services,0,0);results.SetColumnSpan(services,2);
+        results.Controls.Add(services,0,0);results.SetColumnSpan(services,3);
+        var marks=new[]{Mark.Sun,Mark.Chat,Mark.Stars};
+        var colors=new[]{Color.SandyBrown,Color.Turquoise,Color.FromArgb(178,167,255)};
         for(int i=0;i<3;i++){
             int row=1+3*i;
             var name=Copy(names[i+1],true);
-            name.Margin=new Padding(4,8,2,4);results.Controls.Add(name,0,row);
+            results.Controls.Add(new Glyph(marks[i],colors[i]),0,row);
+            name.Margin=new Padding(0,8,2,4);results.Controls.Add(name,1,row);
             outcomes[i]=Copy("",false);outcomes[i].AccessibleName=names[i+1]+" — статус";
             outcomes[i].TextAlign=ContentAlignment.MiddleRight;outcomes[i].Margin=new Padding(2,8,4,4);
-            results.Controls.Add(outcomes[i],1,row);
-            reasons[i]=Copy("",false);reasons[i].Margin=new Padding(4,0,4,6);
-            results.Controls.Add(reasons[i],0,row+1);results.SetColumnSpan(reasons[i],2);
+            results.Controls.Add(outcomes[i],2,row);
+            reasons[i]=Copy("",false);reasons[i].Margin=new Padding(0,0,4,7);
+            results.Controls.Add(reasons[i],1,row+1);results.SetColumnSpan(reasons[i],2);
             if(i<2){
                 var divider=new Panel{Height=1,Dock=DockStyle.Top,Margin=new Padding(4,1,4,1),BackColor=ControlPaint.Light(card,.12f)};
-                results.Controls.Add(divider,0,row+2);results.SetColumnSpan(divider,2);
+                results.Controls.Add(divider,0,row+2);results.SetColumnSpan(divider,3);
             }
         }
         home.Controls.Add(results);
         var proxyCard=Card();proxyCard.ColumnCount=2;proxyCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var edit=ActionButton("Добавить прокси", (sender,e)=>pages.SelectedIndex=1);edit.TextAlign=ContentAlignment.MiddleLeft;
+        var edit=ActionButton("Добавить прокси", (sender,e)=>pages.SelectedIndex=1);edit.TextAlign=ContentAlignment.MiddleLeft;edit.Font=new Font(Font,FontStyle.Bold);
         proxyCard.Controls.Add(edit,0,0);proxyBadge.ForeColor=muted;proxyBadge.Anchor=AnchorStyles.Right;
         proxyCard.Controls.Add(proxyBadge,1,0);
         protection.ForeColor=ink;protection.BackColor=card;protection.Font=new Font(Font,FontStyle.Bold);proxyCard.Controls.Add(protection,0,1);proxyCard.SetColumnSpan(protection,2);
@@ -313,28 +352,33 @@ sealed class GuardWindow : Form {
         UpdateModeHint();
         start.Text="Подключить прокси";start.AutoSize=true;start.Padding=new Padding(12,4,12,4);start.Margin=new Padding(0,8,0,4);
         start.BackColor=accent;start.ForeColor=Color.White;start.FlatStyle=FlatStyle.Flat;start.FlatAppearance.BorderSize=0;
-        start.Click+=(s,e)=>{if(relay!=null || retrying) Disconnect();else if(String.IsNullOrWhiteSpace(urls[0].Text)){pages.SelectedIndex=1;urls[0].Focus();}else Connect();};
+        start.Click+=(s,e)=>{
+            if(relay!=null || retrying){Disconnect();if(relay!=null)pages.SelectedIndex=0;return;}
+            pages.SelectedIndex=0;Connect();
+        };
         var activity=Page("Подключения");
         var connectionsTitle=Copy("Активные подключения",true);connectionsTitle.Font=new Font(Font.FontFamily,18,FontStyle.Bold);activity.Controls.Add(connectionsTitle);
         var feed=Card();activity.Controls.Add(feed);connections=new ConnectionPane(feed,card,ink);
         EventHandler openFlows=(s,e)=>{pages.SelectedIndex=2;nextFlows=DateTime.MinValue;};
         var activityLink=ActionButton("Активные подключения",openFlows);activityLink.Dock=DockStyle.Fill;
-        activityLink.TextAlign=ContentAlignment.MiddleLeft;home.Controls.Add(activityLink);
-        var actions=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft,WrapContents=true};
+        activityLink.TextAlign=ContentAlignment.MiddleLeft;activityLink.Font=new Font(Font,FontStyle.Bold);home.Controls.Add(activityLink);
+        var actions=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2};
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        lastResult.ForeColor=muted;actions.Controls.Add(lastResult,0,0);
         checkAddress.Text="Проверить адрес";checkAddress.AutoSize=true;checkAddress.FlatStyle=FlatStyle.Flat;
         checkAddress.BackColor=accent;checkAddress.ForeColor=ink;checkAddress.FlatAppearance.BorderSize=0;checkAddress.Padding=new Padding(8,4,8,4);
-        checkAddress.Margin=new Padding(6,8,0,4);checkAddress.Visible=false;
+        checkAddress.Margin=new Padding(6,8,0,4);checkAddress.Enabled=false;
         checkAddress.Click+=(sender,e)=>{
-            if(!relayReady || !ProxyOnly || !checkAddress.Enabled)return;
+            if(!relayReady || !checkAddress.Enabled)return;
             try{relay.StandardInput.WriteLine("check");relay.StandardInput.Flush();checkAddress.Enabled=false;checkAddress.Text="Проверяем…";}
             catch(IOException){RelayEnded();}
         };
-        actions.Controls.Add(checkAddress);actions.Controls.Add(start);home.Controls.Add(actions);
+        actions.Controls.Add(checkAddress,1,0);home.Controls.Add(actions);
         var heading=Copy("Общий прокси",true);heading.Font=new Font(Font.FontFamily,18,FontStyle.Bold);settings.Controls.Add(heading);ProxyInputs(settings,0);
         urls[0].TextChanged+=(s,e)=>edit.Text=String.IsNullOrWhiteSpace(urls[0].Text)?"Добавить прокси":"Прокси";
-        var submit=ActionButton("Подключить",(s,e)=>{pages.SelectedIndex=0;if(relay==null)Connect();});
-        submit.BackColor=accent;submit.Anchor=AnchorStyles.Right;
-        paste[0].Parent.Controls.Add(submit);((TableLayoutPanel)paste[0].Parent).SetCellPosition(submit,new TableLayoutPanelCellPosition(1,4));
+        start.Anchor=AnchorStyles.Right;
+        var fields=(TableLayoutPanel)paste[0].Parent;
+        fields.Controls.Add(start,1,4);
         routeOptions=ActionButton("Отдельные прокси  ▸",(sender,e)=>ShowRouteOptions(!optionalRoutes.Visible));
         settings.Controls.Add(routeOptions);
         optionalRoutes=Card();settings.Controls.Add(optionalRoutes);
@@ -388,7 +432,9 @@ sealed class GuardWindow : Form {
         if(relay==null)verdict.ForeColor=ink;
         bool routing=ProxyOnly && relayReady;
         if(routing){verdict.Text="Только прокси";verdict.ForeColor=ink;summary.BackColor=leases==null?card:open?Color.FromArgb(48,60,48):Color.FromArgb(66,54,44);}
-        checkAddress.Visible=routing;start.BackColor=routing?card:accent;
+        if(!relayReady)checkAddress.Enabled=false;
+        else if(checkAddress.Text!="Проверяем…")checkAddress.Enabled=true;
+        start.BackColor=relay!=null || retrying?ControlPaint.Light(card,.17f):accent;
         tray.Text="Guard · "+verdict.Text;tray.Icon=routing?SystemIcons.Shield:open?SystemIcons.Information:closed?SystemIcons.Error:SystemIcons.Warning;
     }
     sealed class ProxyEndpoint {
@@ -465,10 +511,10 @@ sealed class GuardWindow : Form {
          catch{Stop();State("Не удалось запустить Guard или сохранить настройки.",false);}
         finally{
             checkingProxy=false;
-            if(!IsDisposed && !Disposing){start.Enabled=true;Inputs(relay==null);}
+            if(!IsDisposed && !Disposing){start.Enabled=true;Inputs(relay==null && !retrying);}
         }
     }
-    void Inputs(bool enabled){protection.Enabled=enabled || relayReady;allowMismatch.Enabled=enabled;foreach(var t in urls)t.Enabled=enabled;foreach(var t in schemes)t.Enabled=enabled;foreach(var t in paste)t.Enabled=enabled;foreach(var group in new[]{addresses,logins,passwords})foreach(var field in group)field.Enabled=enabled;}
+    void Inputs(bool enabled){protection.Enabled=enabled || relayReady;allowMismatch.Enabled=enabled;foreach(var t in urls)t.Enabled=enabled;foreach(var t in schemes)t.Enabled=enabled;foreach(var t in paste)t.Enabled=enabled;foreach(var t in byField)t.Enabled=enabled;foreach(var group in new[]{addresses,logins,passwords})foreach(var field in group)field.Enabled=enabled;}
     bool DomainRulesPresent(){
         try{return DomainLock.Enabled();}catch{return false;}
     }
@@ -508,7 +554,7 @@ sealed class GuardWindow : Form {
             try{relay.StandardInput.Close();if(!relay.WaitForExit(1200))relay.Kill();}catch(InvalidOperationException){}
             relay.Dispose();relay=null;
         }
-        connections.Update(null,false);relayReady=false;checkAddress.Enabled=true;checkAddress.Text="Проверить адрес";next=null;leases=null;ShowIdle("Выключен");Inputs(true);start.Text="Подключить";State("Откройте настройки, чтобы подключить прокси.",false);
+        connections.Update(null,false);lastResult.Text="Адрес ещё не проверен";relayReady=false;checkAddress.Enabled=true;checkAddress.Text="Проверить адрес";next=null;leases=null;ShowIdle("Выключен");Inputs(true);start.Text="Подключить прокси";State("Откройте настройки, чтобы подключить прокси.",false);
     }
     void RelayEnded(){
         bool recover=relayReady || retrying;
@@ -553,7 +599,7 @@ sealed class GuardWindow : Form {
                     if(ProxyOnly){
                         State("Адрес можно проверить вручную.",false);
                         for(int i=0;i<outcomes.Length;i++)outcomes[i].Text=String.IsNullOrWhiteSpace(urls[i+1].Text)?"Общий прокси":"Свой прокси";
-                    }else ShowIdle("Проверяем…");
+                    }else {ShowIdle("Проверяем…");State("Ожидаем результаты по трём сервисам.",false);}
                     return;
                 }
                 if(line.StartsWith("FLOWS ",StringComparison.Ordinal)){
@@ -563,6 +609,8 @@ sealed class GuardWindow : Form {
                 }
                 if(line=="CHECKED"){checkAddress.Enabled=true;checkAddress.Text="Проверить адрес";return;}
                 leases=json.Deserialize<Dictionary<string,Reading>>(line);
+                lastResult.Text="Результат в "+DateTime.Now.ToString("HH:mm");
+                if(!ProxyOnly){checkAddress.Enabled=relayReady;checkAddress.Text="Проверить адрес";}
             }
             if(leases!=null) RenderReadings((long)(DateTime.UtcNow-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds);
         }catch{RelayEnded();}
@@ -573,12 +621,14 @@ sealed class GuardWindow : Form {
         for(int i=0;i<outcomes.Length;i++){
             Reading r;string caption;Color color;
             if(!leases.TryGetValue(names[i+1],out r)){caption="Проверяем…";color=muted;waiting++;}
-            else if(r.Until>now){caption=ProxyOnly?"Низкий риск":"Можно пользоваться";color=Color.LightGreen;open++;}
-            else{caption=ProxyOnly?"Есть замечание":"Закрыт";color=ProxyOnly?Color.FromArgb(255,195,111):Color.LightSalmon;}
+            else if(r.Until>now){caption=ProxyOnly?"✓  Низкий риск":"✓  Можно работать";color=Color.LightGreen;open++;}
+            else{caption=ProxyOnly?"!  Есть замечание":"×  Закрыт";color=ProxyOnly?Color.FromArgb(255,195,111):Color.LightSalmon;}
             if(outcomes[i].Text!=caption){outcomes[i].Text=caption;outcomes[i].ForeColor=color;}
             string reason=r==null || r.Until>now?"":r.Reason;
             if(r!=null && r.Until<=now && String.IsNullOrEmpty(reason))reason="Срок проверки истёк.";
             if(firstIssue==null && !String.IsNullOrEmpty(reason))firstIssue=names[i+1]+": "+reason;
+            if(r==null)reason="Ожидаем результат проверки.";
+            else if(r.Until>now)reason=(String.IsNullOrWhiteSpace(urls[i+1].Text)?"Общий прокси":"Свой прокси")+" · оценка до "+DateTimeOffset.FromUnixTimeSeconds(r.Until).LocalDateTime.ToString("HH:mm");
             if(reasons[i].Text!=reason)ShowReason(i,reason);
         }
         string current=ProxyOnly?(waiting>0?"Проверяем адреса…":open==3?"Замечаний по адресу нет.":"Есть замечания к выходному IP."):waiting>0?"Идёт проверка…":open==3?"Все три сервиса доступны":"Доступно сервисов: "+open+" из 3";
@@ -608,12 +658,13 @@ sealed class GuardWindow : Form {
         var initialSize=ClientSize;
         foreach(int width in new[]{650,460}){
             ClientSize=new Size(width,570);PerformLayout();pages.SelectedIndex=0;pages.SelectedTab.PerformLayout();
-            foreach(var control in new Control[]{verdict,status,proxyBadge,start,outcomes[0],outcomes[1],outcomes[2]}){
+            foreach(var control in new Control[]{verdict,status,proxyBadge,checkAddress,outcomes[0],outcomes[1],outcomes[2]}){
+                pages.SelectedTab.ScrollControlIntoView(control);
                 var rect=pages.SelectedTab.RectangleToClient(control.RectangleToScreen(control.ClientRectangle));
                 if(rect.Width<=0 || rect.Left<0 || rect.Right>pages.SelectedTab.ClientSize.Width || rect.Bottom>pages.SelectedTab.ClientSize.Height)return 21;
             }
         }
-        ClientSize=initialSize;
+        ClientSize=initialSize;pages.SelectedTab.AutoScrollPosition=Point.Empty;
         pages.SelectedIndex=1;ShowRouteOptions(true);
         for(int i=0;i<4;i++){
             pages.Update();
@@ -646,23 +697,26 @@ sealed class GuardWindow : Form {
         if(!outcomes[2].AccessibleDescription.Contains("Google: NL, IPinfo: DE") || !outcomes[0].Text.Contains("Можно") || !outcomes[1].Text.Contains("Проверяем"))return 19;
         RenderReadings(201);if(!outcomes[0].Text.Contains("Закрыт"))return 20;
         allowMismatch.Checked=true;
-        urls[0].Text="http://example.org:invalid";start.PerformClick();
+        pages.SelectedIndex=1;urls[0].Text="http://example.org:invalid";start.PerformClick();
         if(relay!=null || !status.Text.Contains("строку прокси"))return 13;
-        urls[0].Text="http://127.0.0.1:1";pins[0]="192.0.2.1"; start.PerformClick();
+        pages.SelectedIndex=1;urls[0].Text="http://127.0.0.1:1";pins[0]="192.0.2.1"; start.PerformClick();
         if(relay==null || relay.HasExited || !File.Exists(saved) || urls[0].Enabled)return 14;
         byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(saved),null,DataProtectionScope.CurrentUser);
         if(!json.Deserialize<Route[]>(Encoding.UTF8.GetString(plain))[0].AllowGoogleCountryMismatch)return 15;
         relayReady=true;
         leases=new Dictionary<string,Reading>();
-        for(int i=1;i<names.Length;i++)leases[names[i]]=new Reading{Until=201};
-        RenderReadings(200);SaveSmokeImage("01-access-open.png");
+        long demoTime=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        for(int i=1;i<names.Length;i++)leases[names[i]]=new Reading{Until=demoTime+120};
+        lastResult.Text="Результат в "+DateTime.Now.ToString("HH:mm");
+        RenderReadings(demoTime);SaveSmokeImage("01-access-open.png");
         leases["Antigravity"]=new Reading{Until=0,Reason="Google не подтвердил страну выхода."};
-        RenderReadings(200);SaveSmokeImage("02-one-service-closed.png");
+        RenderReadings(demoTime);SaveSmokeImage("02-one-service-closed.png");
         if(!reasons[2].Visible || !reasons[2].Text.Contains("страну") || !status.Text.Contains("Antigravity: Google"))return 22;
-        relayReady=false;protection.Checked=false;relayReady=true;RenderReadings(200);
-        if(outcomes[2].Text!="Есть замечание" || !checkAddress.Visible || !reasons[2].Visible)return 23;
+        relayReady=false;protection.Checked=false;relayReady=true;RenderReadings(demoTime);
+        if(!outcomes[2].Text.Contains("Есть замечание") || !checkAddress.Visible || !reasons[2].Visible)return 23;
         SaveSmokeImage("04-proxy-only-warning.png");
-        pages.SelectedIndex=0;
+        pages.SelectedIndex=1;
+        if(byField[0].Enabled || !start.Enabled || !start.Text.Contains("Отключить"))return 34;
         start.PerformClick();if(relay!=null || !urls[0].Enabled)return 16;
         return 0;
     }
