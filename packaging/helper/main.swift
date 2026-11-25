@@ -6,8 +6,19 @@ enum DNSLeasePolicy {
     static let hosts: Set<String> = embeddedMCPHosts
 
     static func permits(_ names: [String]) -> Bool {
-        (1...10).contains(names.count) && Set(names).count == names.count && Set(names).isSubset(of: hosts)
+        guard (1...10).contains(names.count) else { return false }
+        let requested = Set(names)
+        return requested.count == names.count && requested.isSubset(of: hosts) &&
+            !names.contains { name in
+                protectedDomains.contains { overlaps(name, $0) }
+            }
     }
+
+    static func overlaps(_ left: String, _ right: String) -> Bool {
+        left == right || left.hasSuffix("." + right) || right.hasSuffix("." + left)
+    }
+
+    private static let protectedDomains = DirectRouteLock.hosts + ["ip123.in", "ipinfo.io", "www.cloudflare.com"]
 
     private static func option(_ fd: Int32, _ name: Int32) -> Int32? {
         var value: Int32 = 0
@@ -53,9 +64,7 @@ private final class DNSLease {
     let value: NSDictionary
     var store: SCDynamicStore?
 
-    init?(names: [String], udp: FileHandle, tcp: FileHandle) {
-        guard DNSLeasePolicy.permits(names), let port = DNSLeasePolicy.port(udp, type: SOCK_DGRAM),
-              DNSLeasePolicy.port(tcp, type: SOCK_STREAM) == port else { return nil }
+    init?(names: [String], udp: FileHandle, tcp: FileHandle, port: UInt16) {
         self.names = Set(names)
         self.udp = udp
         self.tcp = tcp
@@ -127,11 +136,18 @@ private final class RuleClient: NSObject, GuardRuleControl {
 
     func publishDNS(_ hosts: [String], udp: FileHandle, tcp: FileHandle, withReply reply: @escaping (Bool) -> Void) {
         service.dns.async {
-            guard !self.ended, self.service.isConsoleUser(self.peer), self.lease == nil,
-                  DNSLeasePolicy.permits(hosts), self.service.claimed.isDisjoint(with: hosts),
-                  let lease = DNSLease(names: hosts, udp: udp, tcp: tcp) else { reply(false); return }
+            // Validate before disturbing the current lease. Clear and publish in
+            // one queue turn so no competing peer can acquire overlapping names.
+            let others = self.service.claimed.subtracting(self.lease?.names ?? [])
+            guard !self.ended, self.service.isConsoleUser(self.peer),
+                  DNSLeasePolicy.permits(hosts),
+                  !hosts.contains(where: { name in others.contains { DNSLeasePolicy.overlaps(name, $0) } }),
+                  let port = DNSLeasePolicy.port(udp, type: SOCK_DGRAM),
+                  DNSLeasePolicy.port(tcp, type: SOCK_STREAM) == port else { reply(false); return }
+            self.clear()
+            guard let lease = DNSLease(names: hosts, udp: udp, tcp: tcp, port: port) else { reply(false); return }
             self.lease = lease
-            self.service.claimed.formUnion(hosts)
+            self.service.claimed.formUnion(lease.names)
             self.refresh()
             reply(true)
         }

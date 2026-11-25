@@ -6,6 +6,13 @@ import Security
 struct ProxyEndpoint: Codable,Equatable {
     var Scheme:String, Host:String, Port:Int, User:String, Password:String
 
+    // URLComponents' userinfo setters differ across Foundation versions for ':'.
+    // Encode each credential as a single URI component on every supported macOS.
+    static func credential(_ text: String) -> String {
+        let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        return text.addingPercentEncoding(withAllowedCharacters: safe) ?? ""
+    }
+
     init(_ line:String, scheme:String) throws {
         let raw=line.trimmingCharacters(in:.whitespacesAndNewlines)
         var value=raw
@@ -13,7 +20,7 @@ struct ProxyEndpoint: Codable,Equatable {
             let parts=raw.split(separator:":",maxSplits:3,omittingEmptySubsequences:false)
             if parts.count==4,let port=Int(parts[1]), (1...65535).contains(port), !parts[0].contains("[") {
                 var c=URLComponents()
-                c.scheme=scheme;c.host=String(parts[0]);c.port=port;c.user=String(parts[2]);c.password=String(parts[3])
+                c.scheme=scheme;c.host=String(parts[0]);c.port=port;c.percentEncodedUser=Self.credential(String(parts[2]));c.percentEncodedPassword=Self.credential(String(parts[3]))
                 value=c.string ?? ""
             }
         }
@@ -22,7 +29,7 @@ struct ProxyEndpoint: Codable,Equatable {
               let p=c.port,(1...65535).contains(p),let proto=c.scheme?.lowercased(),
               ["http","https","socks5","socks5h"].contains(proto),c.path.isEmpty || c.path=="/",
               c.query==nil,c.fragment==nil else {throw ProxyIssue("Вставьте строку логин:пароль@адрес:порт или адрес:порт:логин:пароль.")}
-        Scheme=proto=="socks5h" ? "socks5":proto;Host=h.trimmingCharacters(in:CharacterSet(charactersIn:"[]"));Port=p;User=c.user ?? "";Password=c.password ?? ""
+        Scheme=proto=="socks5h" ? "socks5":proto;Host=h.trimmingCharacters(in:CharacterSet(charactersIn:"[]"));Port=p;User=c.percentEncodedUser?.removingPercentEncoding ?? "";Password=c.percentEncodedPassword?.removingPercentEncoding ?? ""
     }
 }
 struct ProxyIssue:LocalizedError {
@@ -684,8 +691,8 @@ struct ProxyInput {
               url.user == nil, url.password == nil else {
             throw ProxyIssue("Введите адрес и порт или вставьте строку прокси целиком.")
         }
-        if !username.isEmpty || !password.isEmpty { url.user = username }
-        if !password.isEmpty { url.password = password }
+        if !username.isEmpty || !password.isEmpty { url.percentEncodedUser = ProxyEndpoint.credential(username) }
+        if !password.isEmpty { url.percentEncodedPassword = ProxyEndpoint.credential(password) }
         guard let line = url.string else { throw ProxyIssue("Проверьте адрес прокси.") }
         _ = try ProxyEndpoint(line, scheme: scheme)
         return line

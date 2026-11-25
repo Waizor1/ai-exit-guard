@@ -10,7 +10,7 @@ final class MCPDNSMonitor {
     private var handles: (FileHandle, FileHandle)?
     private var names: [String] = []
     private var epoch = UUID()
-    private var operation = UUID()
+    private var operation: UUID?
     private var retry: DispatchWorkItem?
     private var enabled = false
     private var suspended = false
@@ -68,11 +68,20 @@ final class MCPDNSMonitor {
         handles = pair
         worker = process
         DispatchQueue.global(qos:.utility).async { [weak self] in
+            defer {
+                DispatchQueue.main.async {
+                    guard let self, self.epoch == generation else { return }
+                    self.reset()
+                    self.scheduleRetry()
+                }
+            }
             var buffer = Data()
+            var bytes = [UInt8](repeating: 0, count: 4096)
             while true {
-                let bytes = pipe.fileHandleForReading.availableData
-                if bytes.isEmpty { return }
-                buffer.append(bytes)
+                let count = Darwin.read(pipe.fileHandleForReading.fileDescriptor, &bytes, bytes.count)
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { return }
+                buffer.append(bytes, count: count)
                 guard buffer.count < 8192 else { return }
                 while let end = buffer.firstIndex(of: 10) {
                     let line = buffer.prefix(upTo:end)
@@ -88,10 +97,10 @@ final class MCPDNSMonitor {
     }
 
     private func apply(_ hosts: [String]) {
-        if hosts.isEmpty { withdraw(); return }
-        guard let handles else { return }
-        let renew = hosts == names && connection != nil
-        if !renew { withdraw() }
+        guard let handles, !hosts.isEmpty || connection != nil else { return }
+        // Consecutive updates, including clear, use one ordered XPC stream.
+        // A renewal can refer to the confirmed names only while no update is pending.
+        let renew = operation == nil && hosts == names && connection != nil
         let client: NSXPCConnection
         if let connection { client = connection }
         else {
@@ -110,19 +119,20 @@ final class MCPDNSMonitor {
         let reply: (Bool) -> Void = { [weak self] ok in
             DispatchQueue.main.async {
                 guard let self, self.operation == token else { return }
-                self.operation = UUID()
+                self.operation = nil
                 if ok { self.names = hosts; self.changed(hosts) } else { self.withdraw() }
             }
         }
         guard let remote = client.remoteObjectProxyWithErrorHandler({ _ in reply(false) }) as? GuardRuleControl else { withdraw(); return }
-        if renew { remote.renewDNS(withReply:reply) }
+        if hosts.isEmpty { remote.clearDNS(withReply:reply) }
+        else if renew { remote.renewDNS(withReply:reply) }
         else { remote.publishDNS(hosts,udp:handles.0,tcp:handles.1,withReply:reply) }
         DispatchQueue.main.asyncAfter(deadline:.now()+5) { [weak self] in
             if self?.operation == token { self?.withdraw() }
         }
     }
     private func withdraw() {
-        operation = UUID()
+        operation = nil
         let old = connection
         connection = nil
         old?.invalidate()

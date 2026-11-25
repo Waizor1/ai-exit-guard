@@ -18,9 +18,10 @@ const mcpDNSLimit = 4096
 const mcpDNSTimeout = 3 * time.Second
 
 type mcpAnswerPolicy struct {
-	records  map[string][]netip.Addr
-	original originalDNS
-	expires  time.Time
+	records      map[string][]netip.Addr
+	original     originalDNS
+	expires      time.Time
+	checkForward func(context.Context, string) bool
 }
 
 type mcpAnswers struct {
@@ -28,7 +29,11 @@ type mcpAnswers struct {
 }
 
 func (a *mcpAnswers) replace(records map[string][]netip.Addr, original originalDNS, expires time.Time) {
-	p := &mcpAnswerPolicy{make(map[string][]netip.Addr, len(records)), original, expires}
+	a.replaceChecked(records, original, expires, nil)
+}
+
+func (a *mcpAnswers) replaceChecked(records map[string][]netip.Addr, original originalDNS, expires time.Time, check func(context.Context, string) bool) {
+	p := &mcpAnswerPolicy{make(map[string][]netip.Addr, len(records)), original, expires, check}
 	for h, ips := range records {
 		p.records[h] = slices.Clone(ips)
 	}
@@ -135,6 +140,20 @@ func writeMCPFrame(c net.Conn, b []byte) error {
 func forwardMCPQuestion(ctx context.Context, original originalDNS, network string, b []byte, q mcpQuestion) []byte {
 	ctx, cancel := context.WithTimeout(ctx, mcpDNSTimeout)
 	defer cancel()
+	upstreams := original.endpoints()
+	for i, upstream := range upstreams {
+		deadline, _ := ctx.Deadline()
+		attempt, finish := context.WithTimeout(ctx, time.Until(deadline)/time.Duration(len(upstreams)-i))
+		response := exchangeMCPQuestion(attempt, upstream, network, b, q)
+		finish()
+		if response != nil {
+			return response
+		}
+	}
+	return nil
+}
+
+func exchangeMCPQuestion(ctx context.Context, original originalDNS, network string, b []byte, q mcpQuestion) []byte {
 	c, err := original.dial(ctx, network)
 	if err != nil {
 		return nil
@@ -222,7 +241,7 @@ func (a *mcpAnswers) answer(ctx context.Context, network string, local netip.Add
 		if !strings.HasSuffix(q.host, "."+host) {
 			continue
 		}
-		if !p.original.server.IsValid() || p.original.server == local {
+		if !p.original.server.IsValid() || p.original.server == local || (p.checkForward != nil && !p.checkForward(ctx, q.host)) {
 			return mcpDNSReply(b, q.end, 2)
 		}
 		resp := forwardMCPQuestion(ctx, p.original, network, b, q)

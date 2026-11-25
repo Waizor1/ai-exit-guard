@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,8 +19,9 @@ import (
 )
 
 type originalDNS struct {
-	server netip.AddrPort
-	iface  int
+	server    netip.AddrPort
+	iface     int
+	secondary []originalDNS
 }
 type mcpNetwork struct {
 	original  originalDNS
@@ -32,6 +34,127 @@ func domainRelated(a, b string) bool {
 	return a == b || strings.HasSuffix(a, "."+b) || strings.HasSuffix(b, "."+a)
 }
 
+// scutil prints nested dictionaries and arrays. A proxy enable flag and its
+// endpoint and scope must all belong to the very same dictionary.
+type proxyBlock struct {
+	kind     string
+	fields   map[string]string
+	children map[string]*proxyBlock
+}
+
+func guardProxySnapshot(raw string) bool {
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	if lines[0] != "<dictionary> {" {
+		return false
+	}
+	root := &proxyBlock{kind: "<dictionary>", fields: map[string]string{}, children: map[string]*proxyBlock{}}
+	stack := []*proxyBlock{root}
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if len(stack) == 0 {
+			return false
+		}
+		if line == "}" {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		key, val, ok := strings.Cut(line, " : ")
+		if !ok || key == "" || key != strings.TrimSpace(key) {
+			return false
+		}
+		cur := stack[len(stack)-1]
+		if _, ok := cur.fields[key]; ok || cur.children[key] != nil {
+			return false
+		}
+		if cur.kind == "<array>" && key != strconv.Itoa(len(cur.fields)+len(cur.children)) {
+			return false
+		}
+		if val == "<array> {" || val == "<dictionary> {" {
+			if len(stack) > 32 {
+				return false
+			}
+			child := &proxyBlock{kind: strings.TrimSuffix(val, " {"), fields: map[string]string{}, children: map[string]*proxyBlock{}}
+			cur.children[key] = child
+			stack = append(stack, child)
+		} else {
+			cur.fields[key] = val
+		}
+	}
+	return len(stack) == 0 && root.safe()
+}
+func (p *proxyBlock) safe() bool {
+	for k, c := range p.children {
+		if strings.HasSuffix(k, "Enable") || !c.safe() {
+			return false
+		}
+	}
+	for k, v := range p.fields {
+		if !strings.HasSuffix(k, "Enable") || v == "0" {
+			continue
+		}
+		if v != "1" {
+			return false
+		}
+		switch k {
+		case "ProxyAutoConfigEnable":
+			if p.fields["ProxyAutoConfigURLString"] != "http://127.0.0.1:39178/guard.pac" || p.fields["ProxyAutoConfigJavaScript"] != "" {
+				return false
+			}
+		case "HTTPEnable", "HTTPSEnable":
+			prefix := strings.TrimSuffix(k, "Enable")
+			if p.fields[prefix+"Proxy"] != "127.0.0.1" || p.fields[prefix+"Port"] != "39178" {
+				return false
+			}
+			if !p.guardDomains() {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (p *proxyBlock) guardDomains() bool {
+	var names []string
+	for _, key := range []string{"SupplementalMatchDomain", "__MATCH_DOMAIN__", "SupplementalMatchDomains"} {
+		if name, ok := p.fields[key]; ok {
+			if key == "SupplementalMatchDomains" {
+				return false
+			}
+			names = append(names, name)
+		}
+		if array := p.children[key]; array != nil {
+			if key != "SupplementalMatchDomains" || array.kind != "<array>" || len(array.children) != 0 || len(array.fields) == 0 {
+				return false
+			}
+			for _, name := range array.fields {
+				names = append(names, name)
+			}
+		}
+	}
+	for _, name := range names {
+		if !aiHost(name) {
+			return false
+		}
+		for _, label := range strings.Split(strings.TrimSuffix(name, "."), ".") {
+			if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+				return false
+			}
+			for _, c := range label {
+				if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+					return false
+				}
+			}
+		}
+	}
+	return len(names) > 0
+}
+
+func (o originalDNS) endpoints() []originalDNS {
+	return append([]originalDNS{{server: o.server, iface: o.iface}}, o.secondary...)
+}
+
 // Exclude the worker's own resolver from the snapshot. Preserve every other
 // resolver in the signature so a VPN or split-DNS change invalidates evidence.
 func parseMCPNetwork(raw, hosts, proxy string, localPort uint16) (*mcpNetwork, error) {
@@ -39,11 +162,8 @@ func parseMCPNetwork(raw, hosts, proxy string, localPort uint16) (*mcpNetwork, e
 	if !strings.HasPrefix(raw, "DNS configuration\n") || !strings.HasPrefix(strings.TrimSpace(proxy), "<dictionary> {") {
 		return nil, fmt.Errorf("missing system configuration")
 	}
-	for line := range strings.SplitSeq(proxy, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 3 && strings.HasSuffix(fields[0], "Enable") && fields[2] == "1" {
-			return nil, fmt.Errorf("explicit system proxy")
-		}
+	if !guardProxySnapshot(proxy) {
+		return nil, fmt.Errorf("unrecognized system proxy")
 	}
 	for line := range strings.SplitSeq(hosts, "\n") {
 		f := strings.Fields(strings.SplitN(line, "#", 2)[0])
@@ -56,6 +176,8 @@ func parseMCPNetwork(raw, hosts, proxy string, localPort uint16) (*mcpNetwork, e
 	chunks := strings.Split(raw, "\nresolver #")
 	var signature strings.Builder
 	scoped := false
+	bestOrder := int64(1 << 62)
+	ambiguous := false
 	for _, chunk := range chunks[1:] {
 		data, tail, hasTail := strings.Cut(chunk, "\nDNS configuration (")
 		f := strings.SplitN(data, "\n", 2)
@@ -68,6 +190,7 @@ func parseMCPNetwork(raw, hosts, proxy string, localPort uint16) (*mcpNetwork, e
 		port, iface := 53, 0
 		var suffix string
 		var unusual bool
+		order := int64(200000)
 		for ln := range strings.SplitSeq(body, "\n") {
 			k, v, ok := strings.Cut(ln, ":")
 			if !ok {
@@ -103,6 +226,12 @@ func parseMCPNetwork(raw, hosts, proxy string, localPort uint16) (*mcpNetwork, e
 					return nil, fmt.Errorf("invalid interface")
 				}
 				iface = n
+			case k == "order":
+				parsed, e := strconv.ParseUint(v, 10, 32)
+				if e != nil {
+					return nil, e
+				}
+				order = int64(parsed)
 			case k == "options":
 				unusual = true
 			}
@@ -111,15 +240,22 @@ func parseMCPNetwork(raw, hosts, proxy string, localPort uint16) (*mcpNetwork, e
 		if !own {
 			signature.WriteString(body + "\n")
 			s.domains = append(s.domains, domains...)
-			if !scoped && suffix == "" {
-				if unusual || len(ip) != 1 {
-					return nil, fmt.Errorf("ambiguous default DNS")
+			if !scoped && suffix == "" && order <= bestOrder {
+				var original originalDNS
+				for i, addr := range ip {
+					ep := originalDNS{server: netip.AddrPortFrom(addr, uint16(port)), iface: iface}
+					if i == 0 {
+						original = ep
+					} else {
+						original.secondary = append(original.secondary, ep)
+					}
 				}
-				original := originalDNS{netip.AddrPortFrom(ip[0], uint16(port)), iface}
-				if s.original.server.IsValid() && s.original != original {
-					return nil, fmt.Errorf("multiple default routes")
+				if order < bestOrder {
+					bestOrder = order
+					ambiguous = false
+					s.original = original
 				}
-				s.original = original
+				ambiguous = ambiguous || unusual || len(ip) == 0 || !reflect.DeepEqual(original, s.original)
 			}
 		}
 		if hasTail {
@@ -127,7 +263,7 @@ func parseMCPNetwork(raw, hosts, proxy string, localPort uint16) (*mcpNetwork, e
 			signature.WriteString(tail)
 		}
 	}
-	if !s.original.server.IsValid() {
+	if ambiguous || !s.original.server.IsValid() {
 		return nil, fmt.Errorf("no default DNS")
 	}
 	s.signature = sha256.Sum256([]byte(signature.String() + hosts + proxy))
@@ -150,31 +286,37 @@ func mcpSystemNetwork(ctx context.Context, port uint16) (*mcpNetwork, error) {
 	if e != nil {
 		return nil, e
 	}
-	if n.original.iface == 0 {
-		args := []string{"-n", "get"}
-		if n.original.server.Addr().Is6() {
-			args = append(args, "-inet6")
-		}
-		info, err := exec.CommandContext(ctx, "/sbin/route", append(args, n.original.server.Addr().String())...).Output()
-		if err != nil {
-			return nil, err
-		}
-		for line := range strings.SplitSeq(string(info), "\n") {
-			k, v, ok := strings.Cut(line, ":")
-			if ok && strings.TrimSpace(k) == "interface" {
-				iface, err := net.InterfaceByName(strings.TrimSpace(v))
-				if err != nil {
-					return nil, err
-				}
-				n.original.iface = iface.Index
-				break
+	endpoints := n.original.endpoints()
+	for i := range endpoints {
+		ep := &endpoints[i]
+		if ep.iface == 0 {
+			args := []string{"-n", "get"}
+			if ep.server.Addr().Is6() {
+				args = append(args, "-inet6")
 			}
+			info, err := exec.CommandContext(ctx, "/sbin/route", append(args, ep.server.Addr().String())...).Output()
+			if err != nil {
+				return nil, err
+			}
+			for line := range strings.SplitSeq(string(info), "\n") {
+				k, v, ok := strings.Cut(line, ":")
+				if ok && strings.TrimSpace(k) == "interface" {
+					iface, err := net.InterfaceByName(strings.TrimSpace(v))
+					if err != nil {
+						return nil, err
+					}
+					ep.iface = iface.Index
+					break
+				}
+			}
+			if ep.iface <= 0 {
+				return nil, fmt.Errorf("unknown resolver interface")
+			}
+			n.signature = sha256.Sum256([]byte(fmt.Sprintf("%x/%d", n.signature, ep.iface)))
 		}
-		if n.original.iface <= 0 {
-			return nil, fmt.Errorf("unknown resolver interface")
-		}
-		n.signature = sha256.Sum256([]byte(fmt.Sprintf("%x/%d", n.signature, n.original.iface)))
 	}
+	n.original = endpoints[0]
+	n.original.secondary = endpoints[1:]
 	dirs, e := os.ReadDir("/etc/resolver")
 	if e != nil && !os.IsNotExist(e) {
 		return nil, e

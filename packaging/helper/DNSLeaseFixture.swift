@@ -5,6 +5,11 @@ private final class MockStore {
 
     func add(_ key: String, _ value: NSDictionary) -> Bool {
         guard Self.values[key] == nil else { return false }
+        let incoming = value["SupplementalMatchDomains"] as! [String]
+        for published in Self.values.values {
+            let previous = published["SupplementalMatchDomains"] as! [String]
+            assert(!incoming.contains { name in previous.contains { DNSLeasePolicy.overlaps(name, $0) } })
+        }
         self.key = key
         Self.values[key] = value
         return true
@@ -91,10 +96,22 @@ assert(!call { first.publishDNS(names, udp: udp, tcp: t2, withReply: $0) })
 assert(!call { first.publishDNS(names, udp: tcp, tcp: udp, withReply: $0) })
 assert(!call { first.publishDNS(["not.in.catalog"], udp: udp, tcp: tcp, withReply: $0) })
 assert(call { first.publishDNS(names, udp: udp, tcp: tcp, withReply: $0) })
-let key = values().keys.first!
-assert(key.hasPrefix("State:/Network/Service/") && key.hasSuffix("/DNS"))
-assert(values()[key] == ["ServerAddresses": ["127.0.0.1"], "ServerPort": Int(port),
+let originalKey = values().keys.first!
+assert(originalKey.hasPrefix("State:/Network/Service/") && originalKey.hasSuffix("/DNS"))
+assert(values()[originalKey] == ["ServerAddresses": ["127.0.0.1"], "ServerPort": Int(port),
                          "SupplementalMatchDomains": names, "SupplementalMatchDomainsNoSearch": 1])
+for name in ["api.openai.com", "internal.ipinfo.io", "cloudflare.com"] {
+    assert(DNSLeasePolicy.hosts.contains(name) && !DNSLeasePolicy.permits([name]))
+}
+assert(call { other.publishDNS(["mcp.stripe.com"], udp: u2, tcp: t2, withReply: $0) })
+assert(!call { first.publishDNS(["mcp.linear.app", "mcp.stripe.com"], udp: udp, tcp: tcp, withReply: $0) })
+assert(values()[originalKey] != nil && values().count == 2)
+let replacement = ["mcp.linear.app", "mcp.sentry.dev"]
+assert(call { first.publishDNS(replacement, udp: udp, tcp: tcp, withReply: $0) })
+let key = values().first { $0.value["SupplementalMatchDomains"] as? [String] == replacement }!.key
+assert(values()[originalKey] == nil && values().count == 2)
+assert(!call { other.publishDNS(["fixture.mcp.linear.app"], udp: u2, tcp: t2, withReply: $0) })
+assert(call { other.publishDNS(["mcp.figma.com"], udp: u2, tcp: t2, withReply: $0) })
 udp.closeFile()
 tcp.closeFile()
 assert(bound(SOCK_DGRAM, port) == nil && bound(SOCK_STREAM, port) == nil)
@@ -112,4 +129,36 @@ assert(call(other.renewDNS))
 Thread.sleep(forTimeInterval: 3.5)
 assert(values().isEmpty && !call(other.renewDNS))
 otherClient.invalidate()
-print("Passed XPC publication, socket ownership, peer isolation, disconnect and expiry")
+print("Passed XPC publication, host replacement, protected domains, socket ownership, peer isolation, disconnect and expiry")
+
+private var menuConnections = 0
+func fixtureMenuConnection() -> NSXPCConnection {
+    menuConnections += 1
+    return NSXPCConnection(listenerEndpoint: listener.endpoint)
+}
+func fixtureWorkerURL() -> URL? { URL(fileURLWithPath: CommandLine.arguments[1]) }
+private let workerPath = CommandLine.arguments[1]
+private let monitor = MCPDNSMonitor()
+private var reports: [[String]] = []
+monitor.changed = { hosts in
+    reports.append(hosts)
+    switch reports.count {
+    case 1:
+        assert(hosts == names)
+        FileManager.default.createFile(atPath: workerPath + ".replace", contents: nil)
+    case 2:
+        assert(hosts == replacement && menuConnections == 1)
+        FileManager.default.createFile(atPath: workerPath + ".corrupt", contents: nil)
+    case 3: assert(hosts.isEmpty)
+    default: assertionFailure("Unexpected menu status")
+    }
+}
+monitor.start()
+let deadline = Date().addingTimeInterval(8)
+while !FileManager.default.fileExists(atPath: workerPath + ".restarted") && Date() < deadline {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+}
+assert(FileManager.default.fileExists(atPath: workerPath + ".restarted"))
+assert(reports == [names, replacement, []] && menuConnections == 1 && values().isEmpty)
+monitor.stop()
+print("Passed menu update on one peer, malformed worker output withdrawal and restart")

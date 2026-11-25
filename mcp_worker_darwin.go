@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/netip"
 	"os"
@@ -92,10 +93,7 @@ func runMCPDNS(ctx context.Context) int {
 	}()
 	var answers mcpAnswers
 	go answers.serve(ctx, udp, tcp)
-	tracker := mcpdns.NewTrackerWithSystemLookup(nativeMCPLookup)
-	leases := map[string]mcpLease{}
-	var previous [32]byte
-	encoder := json.NewEncoder(os.Stderr)
+	state := mcpWorkerState{home: home, port: addr.Port(), leases: make(map[string]mcpLease), answers: &answers, encoder: json.NewEncoder(os.Stderr)}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -104,95 +102,197 @@ func runMCPDNS(ctx context.Context) int {
 			return 0
 		case <-timer.C:
 		}
-		start := time.Now()
-		candidates := mcpdns.Discover(home)
-		records := map[string][]netip.Addr{}
-		names := []string{}
-		cycle, cancel := context.WithTimeout(ctx, 18*time.Second)
-		// Absence of configured catalog hosts is the normal idle case.
-		var network *mcpNetwork
-		if len(candidates) > 0 {
-			network, _ = mcpSystemNetwork(cycle, addr.Port())
-		}
-		if network == nil || network.signature != previous {
-			tracker = mcpdns.NewTrackerWithSystemLookup(nativeMCPLookup)
-			clear(leases)
-			answers.replace(nil, originalDNS{}, time.Time{})
-		}
-		if network != nil {
-			previous = network.signature
-			var probes []string
-			for host := range leases {
-				if !slices.Contains(candidates, host) || network.excludes(host) {
-					delete(leases, host)
-				}
-			}
-			for _, host := range candidates {
-				if network.excludes(host) {
-					continue
-				}
-				if lease, found := leases[host]; found {
-					if !start.Before(lease.until) {
-						delete(leases, host)
-						continue
-					}
-					if start.Sub(lease.verified) >= 45*time.Second {
-						verified := recheckMCPLease(cycle, host, lease)
-						if len(verified) == 0 {
-							delete(leases, host)
-							continue
-						}
-						lease.addrs, lease.verified = verified, time.Now()
-						leases[host] = lease
-					}
-				} else {
-					probes = append(probes, host)
-				}
-			}
-			// Recheck split-DNS at the boundary immediately before disclosing a public hostname.
-			exclude := func(host string) bool {
-				current, err := mcpSystemNetwork(cycle, addr.Port())
-				return err != nil || current.signature != previous || current.excludes(host)
-			}
-			verified := tracker.Verified(cycle, probes, exclude)
-			for host, ips := range verified {
-				if len(leases) < 10 {
-					leases[host] = mcpLease{ips, start.Add(3 * time.Minute), start}
-				}
-			}
-			deadline := start.Add(55 * time.Second)
-			// Take a new snapshot even if the probe deadline was reached. Never publish a result from a former network.
-			verifyCtx, done := context.WithTimeout(ctx, 2*time.Second)
-			current, err := mcpSystemNetwork(verifyCtx, addr.Port())
-			done()
-			if err == nil && current.signature == previous {
-				configured := mcpdns.Discover(home)
-				for host, lease := range leases {
-					if !current.excludes(host) && slices.Contains(configured, host) && time.Now().Before(lease.until) {
-						records[host] = lease.addrs
-						names = append(names, host)
-						if lease.until.Before(deadline) {
-							deadline = lease.until
-						}
-					} else {
-						delete(leases, host)
-					}
-				}
-				answers.replace(records, current.original, deadline)
-			} else {
-				clear(leases)
-				answers.replace(nil, originalDNS{}, time.Time{})
-			}
-		}
-		cancel()
-		sort.Strings(names)
-		if encoder.Encode(names) != nil {
+		next, err := state.scan(ctx)
+		if err != nil {
 			return 1
-		}
-		next := 3 * time.Minute
-		if len(leases) > 0 || tracker.NeedsConfirmation() {
-			next = 25 * time.Second
 		}
 		timer.Reset(next)
 	}
+}
+
+const mcpHardLease = 3 * time.Minute
+const mcpFastRetry = 5 * time.Second
+
+type mcpWorkerState struct {
+	home    string
+	port    uint16
+	leases  map[string]mcpLease
+	network *mcpNetwork
+	tracker *mcpdns.Tracker
+	answers *mcpAnswers
+	encoder *json.Encoder
+	sent    []string
+}
+
+// When our temporary resolver is active, the ordinary getaddrinfo result for
+// that host is our own reply. Recheck its previous system DNS and TLS path
+// directly before a hard lease expires. Only a fresh differential test extends it.
+func (s *mcpWorkerState) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
+	if _, active := s.leases[host]; !active {
+		return nativeMCPLookup(ctx, host)
+	}
+	endpoints := s.network.original.endpoints()
+	var last error
+	for _, endpoint := range endpoints {
+		attempt, end := context.WithTimeout(ctx, 1500*time.Millisecond)
+		resolver := net.Resolver{PreferGo: true, StrictErrors: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return endpoint.dial(ctx, network)
+		}}
+		ips, err := resolver.LookupNetIP(attempt, "ip", host+".")
+		end()
+		if len(ips) > 0 || err == nil {
+			return ips, err
+		}
+		var failure *net.DNSError
+		if errors.As(err, &failure) && failure.IsNotFound {
+			return nil, mcpdns.ErrNoDNSAnswer
+		}
+		last = err
+	}
+	return nil, last
+}
+
+func (s *mcpWorkerState) publish(now time.Time, heartbeat bool) error {
+	records := map[string][]netip.Addr{}
+	names := []string{}
+	expires := now.Add(60 * time.Second)
+	for host, lease := range s.leases {
+		if !now.Before(lease.until) {
+			continue
+		}
+		records[host] = lease.addrs
+		names = append(names, host)
+		if lease.until.Before(expires) {
+			expires = lease.until
+		}
+	}
+	sort.Strings(names)
+	var original originalDNS
+	if s.network != nil {
+		original = s.network.original
+	}
+	var check func(context.Context, string) bool
+	if s.network != nil && len(records) > 0 {
+		signature, port := s.network.signature, s.port
+		check = func(ctx context.Context, host string) bool {
+			bounded, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+			defer cancel()
+			current, err := mcpSystemNetwork(bounded, port)
+			return err == nil && current.signature == signature && !current.excludes(host)
+		}
+	}
+	s.answers.replaceChecked(records, original, expires, check)
+	if heartbeat || !slices.Equal(names, s.sent) {
+		if err := s.encoder.Encode(names); err != nil {
+			return err
+		}
+		s.sent = names
+	}
+	return nil
+}
+
+func (s *mcpWorkerState) prune(candidates []string, now time.Time) bool {
+	removed := false
+	for host, lease := range s.leases {
+		if !now.Before(lease.until) || s.network == nil || s.network.excludes(host) || !slices.Contains(candidates, host) {
+			delete(s.leases, host)
+			removed = true
+		}
+	}
+	return removed
+}
+
+func (s *mcpWorkerState) adopt(n *mcpNetwork) {
+	if s.network == nil || n == nil || s.network.signature != n.signature {
+		s.tracker = mcpdns.NewTrackerWithSystemLookup(s.lookup)
+		clear(s.leases)
+	}
+	s.network = n
+}
+
+func (s *mcpWorkerState) nextDelay(now time.Time, removed bool) time.Duration {
+	if removed {
+		return mcpFastRetry
+	}
+	delay := 3 * time.Minute
+	if len(s.leases) > 0 || s.tracker.NeedsConfirmation() {
+		delay = 25 * time.Second
+	}
+	for _, l := range s.leases {
+		if remaining := l.until.Sub(now); remaining < delay {
+			delay = max(remaining, time.Millisecond)
+		}
+	}
+	return delay
+}
+
+func (s *mcpWorkerState) scan(parent context.Context) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(parent, 18*time.Second)
+	defer cancel()
+	now := time.Now()
+	candidates := mcpdns.Discover(s.home)
+	var n *mcpNetwork
+	if len(candidates) > 0 {
+		n, _ = mcpSystemNetwork(ctx, s.port)
+	}
+	s.adopt(n)
+	removed := s.prune(candidates, now)
+	// Withdraw invalid/expired domains before any network checks can block.
+	if err := s.publish(now, false); err != nil {
+		return 0, err
+	}
+	if n == nil {
+		return s.nextDelay(now, removed), s.publish(now, true)
+	}
+
+	var probes []string
+	for _, h := range candidates {
+		if n.excludes(h) {
+			continue
+		}
+		l, active := s.leases[h]
+		if active && now.Sub(l.verified) >= 45*time.Second {
+			// One slow host cannot consume the probe budget for the entire scan.
+			verify, done := context.WithTimeout(ctx, 2300*time.Millisecond)
+			live := recheckMCPLease(verify, h, l)
+			done()
+			if len(live) == 0 {
+				if ctx.Err() == nil {
+					delete(s.leases, h)
+					removed = true
+				}
+				continue
+			}
+			l.addrs, l.verified = live, time.Now()
+			s.leases[h] = l
+		}
+		if !active || l.until.Sub(now) <= 2*time.Minute {
+			probes = append(probes, h)
+		}
+	}
+	// The tracker may check hosts concurrently. The network and lease maps are
+	// read-only until Verified returns.
+	exclude := func(host string) bool {
+		live, err := mcpSystemNetwork(ctx, s.port)
+		return err != nil || live.signature != n.signature || live.excludes(host)
+	}
+	verified := s.tracker.Verified(ctx, probes, exclude)
+	finish, done := context.WithTimeout(parent, 2*time.Second)
+	current, err := mcpSystemNetwork(finish, s.port)
+	done()
+	if err != nil || current.signature != n.signature {
+		s.adopt(nil)
+		return mcpFastRetry, s.publish(time.Now(), true)
+	}
+	s.network = current
+	configured := mcpdns.Discover(s.home)
+	now = time.Now()
+	removed = s.prune(configured, now) || removed
+	for h, ips := range verified {
+		_, existing := s.leases[h]
+		if (existing || len(s.leases) < 10) && slices.Contains(configured, h) && !current.excludes(h) {
+			s.leases[h] = mcpLease{ips, now.Add(mcpHardLease), now}
+		}
+	}
+	return s.nextDelay(now, removed), s.publish(now, true)
 }
