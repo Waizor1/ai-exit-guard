@@ -33,7 +33,7 @@ struct Reading: Decodable, Equatable {
         guard ipRisk != nil else {return .riskUnavailable}
         if RegionPolicy.isKnown(Country), Country != TraceCountry {return .regionConflict}
         if !infoFinished {return InfoDetail.isEmpty ? .waiting : .infoUnavailable}
-        if Host=="accounts.google.com" && Status=="google" {return .clear}
+        if Host=="accounts.google.com" && Status=="google" {return IP == AssessmentIP ? .clear : .trustUnavailable}
         if trust != nil {return .clear}
         if Status == "split", !AssessmentIP.isEmpty, AssessmentIP != IP {return .reputationOnly}
         return .trustUnavailable
@@ -81,6 +81,7 @@ final class Monitor: NSObject, ObservableObject {
     private let iso = ISO8601DateFormatter()
     private var lastAttempt = Date.distantPast
     private var retryAt:Date?
+    private var advisoryRetriesLeft = 0
     private var recoveryDelay:TimeInterval=5
     @Published private(set) var received = Set<String>()
     // This helper opens direct connections. A system proxy can give clients another exit.
@@ -133,7 +134,7 @@ final class Monitor: NSObject, ObservableObject {
     func displayedFinding(_ host:String, now:Date = Date()) -> Finding {
         let current=finding(host)
         let service=Self.service(host)
-        if current.missingEvidence, online, directProbeAllowed,
+        if current.missingEvidence, !proxy.proxyOnly, online, directProbeAllowed,
            let last=verifiedExit[host], now < last.expires,
            last.ip == proxy.expectedIP(service), proxy.isOpen(service,at:now) {
             return .rechecking
@@ -163,6 +164,10 @@ final class Monitor: NSObject, ObservableObject {
         }
         if worst.missingEvidence, !proxy.expected.isEmpty, selectedHosts.contains(where:{!proxy.isOpen(Self.service($0))}) {
             return "Ждём подтверждения адреса. Guard сам откроет доступ к сервису после успешной проверки."
+        }
+        if proxy.proxyOnly && worst.missingEvidence {
+            if running || retryAt != nil {return "Проверяем адрес повторно. Прокси продолжает работать."}
+            return "Оценка адреса пока недоступна. Прокси продолжает работать."
         }
         return worst.explanation
     }
@@ -212,9 +217,12 @@ final class Monitor: NSObject, ObservableObject {
         if running && elapsed<0 {invalidate("Время системы изменилось.")}
         // Start earlier for pinned routes to leave room for a timeout and retry.
         let interval = proxy.expected.isEmpty ? Self.refreshInterval : 90
-        guard online, !running, !proxy.proxyOnly else {return}
-        if let retryAt, now >= retryAt {startCheck()}
-        else if elapsed>=interval || elapsed<0 {check()}
+        guard online, !running else {return}
+        if let retryAt {
+            guard now >= retryAt else {return}
+            if proxy.proxyOnly {advisoryRetriesLeft -= 1}
+            startCheck()
+        } else if !proxy.proxyOnly && (elapsed>=interval || elapsed<0) {check()}
     }
     private var process: Process?
     private var generation = 0
@@ -227,7 +235,12 @@ final class Monitor: NSObject, ObservableObject {
         if let p=process,p.isRunning {p.terminate()}
         process=nil;previous.removeAll();fresh.removeAll();received.removeAll();running=false;note=message;changed?()
     }
-    func check() {recoveryDelay=5;startCheck()}
+    func check() {
+        guard !running else {return}
+        advisoryRetriesLeft = 2
+        recoveryDelay=5
+        startCheck()
+    }
     private func startCheck() {
         updateProxy()
         guard online, directProbeAllowed, !running else{return}
@@ -318,7 +331,7 @@ final class Monitor: NSObject, ObservableObject {
                 }
                 if self.received.count != self.monitoredHosts.count || p.terminationStatus != 0 {self.note="Часть результатов недоступна"}
                 let missing = self.monitoredHosts.contains { self.finding($0).missingEvidence }
-                if missing || p.terminationStatus != 0 {
+                if (missing || p.terminationStatus != 0) && (!self.proxy.proxyOnly || self.advisoryRetriesLeft > 0) {
                     self.retryAt=Date().addingTimeInterval(self.recoveryDelay)
                     self.recoveryDelay=min(30,self.recoveryDelay*2)
                 } else {self.recoveryDelay=5}

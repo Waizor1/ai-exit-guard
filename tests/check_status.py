@@ -63,6 +63,7 @@ enum ProxyVault {
 }
 """ + proxy_source[route_end:] + """
 extension ProxyClient {
+    func fixtureAdvisory() {proxyOnly=true}
     func fixtureLease(_ ip:String, until:Int64) {
         expected=ip;ready=true;assessmentSpec=Data();allowedUntil=until
     }
@@ -281,6 +282,26 @@ record("D",2100)
 precondition(!journal.restricted("claude.ai",now:now.addingTimeInterval(2100)))
 precondition(awaiting("D",2100))
 record("D",2220);precondition(!awaiting("D",2220))
+// A manual advisory check retries temporary failures without closing the relay or enabling periodic polling.
+let advisory=Monitor()
+advisory.online=true;advisory.policyDate={day}
+advisory.proxy.fixtureLease("1.1.1.1",until:0);advisory.proxy.fixtureAdvisory()
+fixture(repeated("green"));advisory.check();waitUntil{!advisory.running}
+fixture(repeated("unknown"));advisory.check();waitUntil{!advisory.running}
+for wait:TimeInterval in [7,16] {
+    advisory.tick(now:Date().addingTimeInterval(wait))
+    precondition(advisory.running && advisory.proxy.isOpen("Claude"))
+    waitUntil{!advisory.running}
+}
+advisory.tick(now:Date().addingTimeInterval(300))
+precondition(!advisory.running && advisory.explanation(for:Monitor.hosts).contains("недоступна"))
+advisory.check();waitUntil{!advisory.running}
+fixture(repeated("green"));advisory.tick(now:Date().addingTimeInterval(7))
+precondition(advisory.running);waitUntil{!advisory.running}
+precondition(advisory.overall == .clear)
+advisory.tick(now:Date().addingTimeInterval(91));precondition(!advisory.running)
+let googleEvidence = Reading(Host:Monitor.googleHost,IP:"1.1.1.1",AssessmentIP:"",Status:"google",Detail:"",RiskDetail:"",Checked:"",Trust:nil,Risk:2,Country:"DE",Network:"",InfoDetail:"",Signals:nil,TraceCountry:"DE",InfoChecked:true,InfoUnavailable:false)
+precondition(googleEvidence.finding(now:day) == .trustUnavailable)
 // A short diagnostic outage is visible without downgrading a still-verified route.
 let pinned=Monitor()
 pinned.history=ExitHistory(store:UserDefaults(suiteName:UUID().uuidString)!)

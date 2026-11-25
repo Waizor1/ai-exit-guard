@@ -77,11 +77,13 @@ func get(ctx context.Context, c *http.Client, addr string) ([]byte, net.Conn, er
 		return nil, nil, err
 	}
 	defer r.Body.Close()
-	if r.StatusCode == http.StatusGatewayTimeout {
-		return nil, nil, errGatewayTimeout
-	}
 	if r.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("HTTP %d", r.StatusCode)
+		status := probeStatus{code: r.StatusCode, retryAfter: r.Header.Get("Retry-After") != ""}
+		if status.retryable() {
+			// Let a small gateway response finish so IP123 can reuse the verified connection.
+			_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 65537))
+		}
+		return nil, nil, status
 	}
 	b, err := io.ReadAll(io.LimitReader(r.Body, 65537))
 	if len(b) > 65536 {
@@ -94,9 +96,30 @@ const probeRetryDelay = 350 * time.Millisecond
 
 var errGatewayTimeout = errors.New("HTTP 504")
 
+type probeStatus struct {
+	code       int
+	retryAfter bool
+}
+
+func (s probeStatus) Error() string { return fmt.Sprintf("HTTP %d", s.code) }
+
+func (s probeStatus) retryable() bool {
+	return !s.retryAfter && (s.code == http.StatusBadGateway || s.code == http.StatusServiceUnavailable || s.code == http.StatusGatewayTimeout)
+}
+
+func transientNetworkError(err error) bool {
+	var netErr net.Error
+	return errors.Is(err, errGatewayTimeout) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || (errors.As(err, &netErr) && netErr.Timeout())
+}
+
 // Only callers performing read-only probes or opening a new tunnel may retry.
 // No model request or established stream is replayed.
 func retryNetworkOnce[T any](ctx context.Context, attempt func() (T, error)) (T, error) {
+	return retryOnce(ctx, attempt, transientNetworkError)
+}
+
+func retryOnce[T any](ctx context.Context, attempt func() (T, error), retryable func(error) bool) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var zero T
 		return zero, err
@@ -105,9 +128,7 @@ func retryNetworkOnce[T any](ctx context.Context, attempt func() (T, error)) (T,
 	if err == nil {
 		return value, nil
 	}
-	var netErr net.Error
-	transient := errors.Is(err, errGatewayTimeout) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || (errors.As(err, &netErr) && netErr.Timeout())
-	if !transient || ctx.Err() != nil {
+	if !retryable(err) || ctx.Err() != nil {
 		return value, err
 	}
 	timer := time.NewTimer(probeRetryDelay)
@@ -124,7 +145,25 @@ func retryNetworkOnce[T any](ctx context.Context, attempt func() (T, error)) (T,
 }
 
 func probeBody(ctx context.Context, c *http.Client, addr string) ([]byte, error) {
-	return retryNetworkOnce(ctx, func() ([]byte, error) { b, _, err := get(ctx, c, addr); return b, err })
+	body, _, err := probeGET(ctx, c, addr, strings.HasPrefix(addr, api+"/"))
+	return body, err
+}
+
+func probeGET(ctx context.Context, c *http.Client, addr string, ip123 bool) ([]byte, net.Conn, error) {
+	var conn net.Conn
+	body, err := retryOnce(ctx, func() ([]byte, error) {
+		b, active, e := get(ctx, c, addr)
+		conn = active
+		return b, e
+	}, func(err error) bool {
+		var status probeStatus
+		if errors.As(err, &status) {
+			return status.retryable() && (ip123 || status.code == http.StatusGatewayTimeout)
+		}
+		var temporary net.Error
+		return transientNetworkError(err) || (ip123 && errors.As(err, &temporary) && temporary.Temporary())
+	})
+	return body, conn, err
 }
 
 func canonical(raw string) (string, error) {
@@ -152,7 +191,7 @@ func traceExit(b []byte, host string) (string, string, error) {
 	return ip, fields["loc"], err
 }
 func trustAt(ctx context.Context, c *http.Client, base string) (v trustResult) {
-	b, first, err := get(ctx, c, base+"/ip.json")
+	b, first, err := probeGET(ctx, c, base+"/ip.json", true)
 	if err != nil {
 		v.err = err
 		return
@@ -166,7 +205,7 @@ func trustAt(ctx context.Context, c *http.Client, base string) (v trustResult) {
 		v.err = err
 		return
 	}
-	b, second, err := get(ctx, c, base+"/ai_trust")
+	b, second, err := probeGET(ctx, c, base+"/ai_trust", true)
 	if err != nil {
 		v.err = err
 		return
@@ -375,11 +414,6 @@ func (c *checker) run(dst target) (r result) {
 		}
 		defer tc.CloseIdleConnections()
 		c.trust = trustAt(c.ctx, tc, api)
-		var temporary net.Error
-		if errors.As(c.trust.err, &temporary) && temporary.Timeout() && c.ctx.Err() == nil {
-			tc.CloseIdleConnections()
-			c.trust = trustAt(c.ctx, tc, api)
-		}
 	})
 	classify(&r, dst.product, c.trust)
 	x := <-risk

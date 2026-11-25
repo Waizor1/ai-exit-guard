@@ -5,6 +5,9 @@ import SystemConfiguration
 final class RuleService: NSObject, NSXPCListenerDelegate, GuardRuleControl {
     private let writes = DispatchQueue(label: "local.aiexitguard.rules.write")
 
+    // Accessed only on the serial writes queue.
+    private var refreshPending = false
+
     private func isConsoleUser(_ connection: NSXPCConnection?) -> Bool {
         var uid: uid_t = 0
         guard let connection, SCDynamicStoreCopyConsoleUser(nil, &uid, nil) != nil,
@@ -30,21 +33,29 @@ final class RuleService: NSObject, NSXPCListenerDelegate, GuardRuleControl {
             guard self.isConsoleUser(peer) else { reply(false); return }
             let args = ["-e", DirectRouteLock.editor, "--", "/private/etc",
                         enabled ? "on" : "off", DirectRouteLock.block, DirectRouteLock.legacyBlock]
-            let applied = self.run("/usr/bin/perl", args)
-                && self.run("/usr/bin/dscacheutil", ["-flushcache"])
-                && self.run("/usr/bin/killall", ["-HUP", "mDNSResponder"])
-            reply(applied && DirectRouteLock.read() == (enabled ? .on : .off))
+            let output = Pipe()
+            guard self.run("/usr/bin/perl", args, output: output.fileHandleForWriting) else { reply(false); return }
+            output.fileHandleForWriting.closeFile()
+            let change = output.fileHandleForReading.readDataToEndOfFile()
+            guard change.isEmpty || change == Data("changed\n".utf8) else { reply(false); return }
+            if !change.isEmpty { self.refreshPending = true }
+            if self.refreshPending {
+                guard self.run("/usr/bin/dscacheutil", ["-flushcache"]),
+                      self.run("/usr/bin/killall", ["-HUP", "mDNSResponder"]) else { reply(false); return }
+                self.refreshPending = false
+            }
+            reply(DirectRouteLock.read() == (enabled ? .on : .off))
         }
     }
 
-    private func run(_ executable: String, _ arguments: [String]) -> Bool {
+    private func run(_ executable: String, _ arguments: [String], output: FileHandle = .nullDevice) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
         process.currentDirectoryURL = URL(fileURLWithPath: "/")
         process.arguments = arguments
         process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
+        process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()

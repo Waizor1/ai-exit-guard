@@ -27,8 +27,14 @@ with tempfile.TemporaryDirectory() as tmp:
     # Redirect the editor to the fixture and skip machine-wide cache flushes.
     original = (root/'packaging/helper/main.swift').read_text()
     assert original.count('geteuid() == 0') == 1
+    log = folder/'refresh.log'
+    fail = folder/'fail-refresh'
+    for name in ('dscacheutil', 'killall'):
+        stub = folder/name
+        stub.write_text(f'#!/bin/sh\necho {name} >> "{log}"\n' + (f'test ! -f "{fail}"\n' if name == 'killall' else ''))
+        stub.chmod(0o700)
     source.write_text(original.replace('geteuid() == 0', 'geteuid() != 0').replace('"/private/etc"', f'"{folder}"')
-                      .replace('"/usr/bin/dscacheutil"', '"/usr/bin/true"').replace('"/usr/bin/killall"', '"/usr/bin/true"'))
+                      .replace('"/usr/bin/dscacheutil"', f'"{folder}/dscacheutil"').replace('"/usr/bin/killall"', f'"{folder}/killall"'))
     daemon = folder/'service'
     run('xcrun','swiftc',shared,source,'-o',daemon)
     ping = """
@@ -59,13 +65,25 @@ RunLoop.main.run()
     run('launchctl','bootstrap',domain,plist)
     try:
         run(clients[0],timeout=10)
+        run(clients[0], 'off', timeout=10)
+        assert not log.exists()
+        fail.touch()
+        pair = ['dscacheutil', 'killall']
+        for attempt in (1, 2):
+            assert subprocess.run([clients[0], 'on'], timeout=10).returncode == 8
+            assert log.read_text().splitlines() == pair * attempt
+        fail.unlink()
         run(clients[0], 'on', timeout=10)
+        assert log.read_text().splitlines() == pair * 3
+        run(clients[0], 'on', timeout=10)
+        assert log.read_text().splitlines() == pair * 3
         protected = hosts.read_bytes()
         assert protected.startswith(original_hosts) and b'127.0.0.2 api.openai.com\n' in protected
         denied = subprocess.run([clients[1], 'off'],timeout=10)
         assert denied.returncode == 7, denied.returncode
         assert hosts.read_bytes() == protected
         run(clients[0], 'off', timeout=10)
+        assert log.read_text().splitlines() == pair * 4
         assert hosts.read_bytes() == original_hosts
         print('NSXPC: pinned GUI enabled and disabled the isolated rule; unrelated client rejected; hosts restored byte-for-byte.')
     finally:

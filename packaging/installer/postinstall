@@ -14,6 +14,14 @@ until /bin/launchctl bootstrap system "/Library/LaunchDaemons/$service.plist"; d
     /bin/sleep 1
 done
 done
-/Library/PrivilegedHelperTools/local.aiexitguard.rules --upgrade-hosts
+change=$(/Library/PrivilegedHelperTools/local.aiexitguard.rules --upgrade-hosts)
+# The system installer runs as root and /private/var/db is root-owned.
+pending=/private/var/db/local.aiexitguard.dns-refresh-pending
+case "$change" in
+    changed) [ -d "$pending" ] || /bin/mkdir -m 700 "$pending" ;;
+    "") [ -d "$pending" ] || exit 0 ;;
+    *) exit 1 ;;
+esac
 /usr/bin/dscacheutil -flushcache
-/usr/bin/killall -HUP mDNSResponder || true
+/usr/bin/killall -HUP mDNSResponder
+/bin/rmdir "$pending"

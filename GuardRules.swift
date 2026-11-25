@@ -100,6 +100,7 @@ open(my $out,'>:raw',$name) or die "open replacement";
 print {$out} $new or die "write"; close $out or die "close replacement";
 die "hosts changed" unless readfile() eq $old;
 rename($name,$path) or die "replace";
+print "changed\n";
 """#
 }
 

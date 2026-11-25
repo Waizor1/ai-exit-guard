@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -199,9 +200,8 @@ func (r *serviceRelay) control(line string) string {
 
 var regionField = regexp.MustCompile(`(?i)<input\b[^>]*\bname=["']region["'][^>]*\bvalue=["']([A-Z]{2})["']`)
 
-func googleRegion(ctx context.Context, s proxySpec) (string, error) {
-	c := s.probeClient()
-	defer c.CloseIdleConnections()
+func googleRegion(ctx context.Context, upstream *http.Client) (string, error) {
+	c := *upstream
 	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) > 5 || req.URL.Scheme != "https" || req.URL.Host != googleHost {
 			return errors.New("unexpected sign-in redirect")
@@ -228,35 +228,94 @@ func googleRegion(ctx context.Context, s proxySpec) (string, error) {
 		return "", err
 	}
 	match := regionField.FindSubmatch(b)
-	if len(match) != 2 {
+	if len(match) != 2 || strings.EqualFold(string(match[1]), "XX") {
 		return "", errors.New("Google не сообщил страну")
 	}
 	return strings.ToUpper(string(match[1])), nil
 }
 
+const fallbackIdentityHost = "www.cloudflare.com"
+
+// Allow both bounded HTTP attempts to finish even if the first hits its 11-second timeout.
+const googleMeasurementTimeout = 24 * time.Second
+
+func googleExitIP(ctx context.Context, probe *http.Client) (ip string, fromIP123 bool, err error) {
+	// Reserve time for the independent identity source even when IP123 stalls.
+	primary, cancel := context.WithTimeout(ctx, 5*time.Second)
+	body, _, err := get(primary, probe, api+"/ip.json")
+	cancel()
+	if errors.Is(err, errProxyAuth) {
+		return "", false, errProxyAuth
+	}
+	var who struct{ IP string }
+	if err == nil && json.Unmarshal(body, &who) == nil {
+		if ip, err := canonical(who.IP); err == nil {
+			return ip, true, nil
+		}
+	}
+	body, err = probeBody(ctx, probe, "https://"+fallbackIdentityHost+"/cdn-cgi/trace")
+	if err == nil {
+		ip, _, err = traceExit(body, fallbackIdentityHost)
+	}
+	return ip, false, err
+}
+
+// Google supplies the country. Both identity sources use the same proxy transport.
+func measureGoogle(parent context.Context, probe *http.Client) (profileMeasurement, bool, error) {
+	ctx, cancel := context.WithTimeout(parent, googleMeasurementTimeout)
+	defer cancel()
+	type regionResult struct {
+		country string
+		err     error
+	}
+	regions := make(chan regionResult, 1)
+	go func() {
+		country, err := retryNetworkOnce(ctx, func() (string, error) { return googleRegion(ctx, probe) })
+		regions <- regionResult{country, err}
+	}()
+	ip, primary, err := googleExitIP(ctx, probe)
+	region := <-regions
+	row := profileMeasurement{IP: ip, Country: region.country}
+	if errors.Is(err, errProxyAuth) || errors.Is(region.err, errProxyAuth) {
+		return row, primary, errProxyAuth
+	}
+	if region.err != nil {
+		// URL errors may contain a redirect URL or private upstream address.
+		var requestError *url.Error
+		if errors.As(region.err, &requestError) {
+			if requestError.Timeout() {
+				return row, primary, errors.New("Истекло время проверки страны Google.")
+			}
+			return row, primary, errors.New("Не удалось открыть страницу входа Google через прокси.")
+		}
+		return row, primary, fmt.Errorf("Проверка страны Google: %w", region.err)
+	}
+	if err != nil {
+		return row, primary, errors.New("IP123 и Cloudflare не подтвердили внешний IP через прокси.")
+	}
+	return row, primary, nil
+}
+
 func checkGoogle(ctx context.Context, ep proxySpec) result {
 	r := result{Host: googleHost, Status: "unknown", Checked: time.Now().UTC().Format(time.RFC3339)}
-	country, err := retryNetworkOnce(ctx, func() (string, error) { return googleRegion(ctx, ep) })
-	if err != nil {
-		r.Detail = "Не удалось проверить страну Google"
-		return r
-	}
-	r.TraceCountry = country
 	probe := ep.probeClient()
 	defer probe.CloseIdleConnections()
-	b, err := probeBody(ctx, probe, api+"/ip.json")
-	var who struct{ IP string }
-	if err != nil || json.Unmarshal(b, &who) != nil {
-		return r
-	}
-	r.IP, err = canonical(who.IP)
+	row, primary, err := measureGoogle(ctx, probe)
+	r.TraceCountry, r.IP = row.Country, row.IP
 	if err != nil {
+		r.Detail = err.Error()
 		return r
 	}
-	r.AssessmentIP = r.IP
+	if primary {
+		r.AssessmentIP = row.IP
+	}
 	c := checker{ctx: ctx, client: newClient()}
 	defer c.client.CloseIdleConnections()
-	r.Risk = c.general(r.IP).value
+	risk := c.general(r.IP)
+	r.Risk = risk.value
+	if risk.err != nil {
+		r.RiskDetail = describe(risk.err)
+	}
 	var info enrichment
 	info.lookup(ctx, c.client, r.IP)
 	info.apply(&r)

@@ -288,7 +288,7 @@ func (s proxySpec) probeClient() *http.Client {
 	tr := c.Transport.(*http.Transport)
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		h, p, e := net.SplitHostPort(addr)
-		if e != nil || p != "443" || (!aiHost(h) && h != "ip123.in") {
+		if e != nil || p != "443" || (!aiHost(h) && h != "ip123.in" && h != fallbackIdentityHost) {
 			return nil, errors.New("unexpected host")
 		}
 		return s.tunnel(ctx, h)
@@ -400,16 +400,20 @@ func proxyCommand(ctx context.Context, mode string) int {
 				return 1
 			}
 		}
-		var baseline string
+		var baseline, baselineCountry string
 		for i := 0; i < 3; i++ {
 			var ip string
 			var e error
 			if request.CheckService == "Antigravity" {
-				g := checkGoogle(ctx, s)
-				ip = g.IP
-				if ip == "" || g.TraceCountry == "" {
-					e = errors.New("Не удалось проверить маршрут Google.")
+				// New connections on each round expose rotating upstream proxies.
+				probe := s.probeClient()
+				row, _, err := measureGoogle(ctx, probe)
+				probe.CloseIdleConnections()
+				ip, e = row.IP, err
+				if err == nil && baselineCountry != "" && baselineCountry != row.Country {
+					e = errors.New("Страна Google меняется между проверками.")
 				}
+				baselineCountry = row.Country
 			} else {
 				ip, e = verifyTargets(ctx, s, selected)
 			}
