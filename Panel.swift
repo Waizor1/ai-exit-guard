@@ -18,6 +18,9 @@ struct GuardPanel: View {
     private var selectedHosts:[String] {model.selectedService.map(hosts) ?? model.monitoredHosts}
     private var verdict:Recommendation {model.displayed(selectedHosts)}
     private var proxyMode:Bool { model.proxy.proxyOnly && model.proxy.ready }
+    private var appVersion: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    }
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             HStack {
@@ -27,7 +30,10 @@ struct GuardPanel: View {
                     }.buttonStyle(.plain)
                 } else {
                     Image(systemName:"shield.checkered").foregroundStyle(.secondary)
-                    Text("AI Exit Guard").fontWeight(.semibold)
+                }
+                Text("AI Exit Guard").font(.headline)
+                if let appVersion {
+                    Text(verbatim: appVersion).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 }
                 Spacer()
                 if !model.permissions && !model.showConnections && !model.proxySettings && model.selectedService == nil {
@@ -123,22 +129,23 @@ struct GuardPanel: View {
                     Button("История IP"){model.showHistory=true}.buttonStyle(.link)
                     Button("Технические сведения"){model.technical=true}.buttonStyle(.link)
                 } else {
-                    VStack(spacing:0){
+                    VStack(alignment:.leading,spacing:0){
+                        Text("Сервисы").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).padding(.bottom,3)
                         serviceRow("Claude","sun.max.fill",.orange)
                         Divider()
                         serviceRow("ChatGPT","bubble.left.and.bubble.right.fill",.teal)
                         Divider()
                         serviceRow("Antigravity","sparkles",.indigo)
-                    }.padding(.horizontal,10)
+                    }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12))
                 }
                 if model.selectedService == nil {
                     MainProxyCard(monitor:model,proxy:proxy)
                     Button {model.showConnections=true} label:{
                         HStack {
-                            Label("Подключения приложений",systemImage:"arrow.left.arrow.right")
+                            Label("Активные подключения",systemImage:"arrow.left.arrow.right").font(.headline)
                             Spacer()
                             Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
-                        }.contentShape(Rectangle())
+                        }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12)).contentShape(Rectangle())
                     }.buttonStyle(.plain)
                 }
                 Divider()
@@ -152,7 +159,7 @@ struct GuardPanel: View {
                     Button(action:model.check){Text("Проверить адрес")}.buttonStyle(.borderedProminent).disabled(model.running || !model.online || !model.directProbeAllowed)
                 }
             }
-        }.padding(18).frame(width:model.showConnections ? 408 : 370).fixedSize(horizontal:false,vertical:true)
+        }.padding(18).frame(width:408).fixedSize(horizontal:false,vertical:true)
     }
     func usage(_ label:String,_ host:String)->some View {
         HStack {
@@ -189,8 +196,8 @@ struct GuardPanel: View {
                             Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси").font(.caption).foregroundStyle(.secondary)
                         } else { status(state) }
                     }
-                    if !paused(name), !checkedRoutes.isEmpty, state != .clear, let finding {
-                        Text(finding.verdict == .clear ? "Ждём подтверждения прокси" : finding.shortReason)
+                    if !paused(name), !checkedRoutes.isEmpty, let finding {
+                        Text(!model.online ? "Нет сети" : finding.verdict == .clear && state != .clear ? "Ждём подтверждения прокси" : finding.shortReason)
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }
                 }
@@ -239,7 +246,7 @@ private struct MainProxyCard:View {
                 HStack {
                     Label("Прокси",systemImage:"network").font(.headline)
                     Spacer()
-                    Text(proxy.expected.isEmpty && !proxy.paused && !proxy.busy ? "Настроить" : status.0)
+                    Text(proxy.expected.isEmpty && !proxy.paused && !proxy.busy ? "Добавить прокси" : status.0)
                         .font(.callout).foregroundStyle(status.1)
                     Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
                 }.contentShape(Rectangle())

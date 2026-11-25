@@ -58,7 +58,14 @@ sealed class ConnectionPane {
             TextRenderer.DrawText(e.Graphics,e.SubItem.Text,list.Font,Rectangle.Inflate(e.Bounds,-3,0),text,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
         };
         list.Columns.Add("Состояние",128);list.Columns.Add("Адрес",175);list.Columns.Add("Время",62);
-        list.Resize+=(s,e)=>list.Columns[1].Width=Math.Max(100,list.ClientSize.Width-211);
+        Action fitColumns=()=>{
+            int stateWidth=TextRenderer.MeasureText("Возможный обход  ",list.Font).Width;
+            int timeWidth=TextRenderer.MeasureText("00:00:00  ",list.Font).Width;
+            list.Columns[0].Width=stateWidth;
+            list.Columns[2].Width=timeWidth;
+            list.Columns[1].Width=Math.Max(60,list.ClientSize.Width-stateWidth-timeWidth-SystemInformation.VerticalScrollBarWidth);
+        };
+        list.Resize+=(s,e)=>fitColumns();list.FontChanged+=(s,e)=>fitColumns();
         panel.Controls.Add(note);panel.Controls.Add(list);
     }
     public void Update(Flow[] rows,bool connected){

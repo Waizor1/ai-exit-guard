@@ -665,8 +665,9 @@ struct ProxyEditor: View {
     @ObservedObject var proxy:ProxyClient
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
-            Text("Прокси для ИИ").font(.title2.bold())
+            Text("Общий прокси").font(.title2.bold())
             if !proxy.library.entries.isEmpty {
+                Text("Сохранённые прокси").font(.headline)
                 ScrollView { VStack(alignment:.leading,spacing:8){ ForEach(proxy.library.entries) { entry in
                     HStack {
                         VStack(alignment:.leading) {
@@ -681,7 +682,7 @@ struct ProxyEditor: View {
                 }}.frame(maxHeight:160)
                 HStack {
                     Button(proxy.measuring ? "Проверяем…" : "Проверить выходы"){proxy.checkLibrary()}.disabled(proxy.measuring)
-                    if !proxy.replacing {Button("Добавить"){proxy.replacing=true}}
+                    if !proxy.replacing {Button("Добавить прокси"){proxy.replacing=true}}
                 }
             }
             if proxy.paused && !proxy.replacing && proxy.library.entries.isEmpty {
@@ -691,12 +692,15 @@ struct ProxyEditor: View {
                     Button("Другой прокси"){proxy.replacing=true}
                 }.disabled(proxy.busy)
             } else if proxy.replacing || (proxy.expected.isEmpty && proxy.library.entries.isEmpty) {
-                if proxy.paused || proxy.ready {Button("Назад"){proxy.replacing=false}}
+                if proxy.replacing && (proxy.paused || proxy.ready || !proxy.library.entries.isEmpty) {Button("Отменить добавление"){proxy.replacing=false}}
                 Text("Вставьте строку из кабинета провайдера. Guard проверит, что Claude и ChatGPT видят один IP.").font(.callout)
                 Picker("Протокол",selection:$proxy.scheme) {
                     Text("HTTP").tag("http");Text("HTTPS").tag("https");Text("SOCKS5").tag("socks5")
                 }.pickerStyle(.segmented)
-                SecureField("логин:пароль@адрес:порт",text:$proxy.draft).textFieldStyle(.roundedBorder)
+                VStack(alignment:.leading,spacing:4) {
+                    Text("Адрес прокси").font(.subheadline.weight(.semibold))
+                    SecureField("логин:пароль@адрес:порт",text:$proxy.draft).textFieldStyle(.roundedBorder).accessibilityLabel("Адрес прокси")
+                }
                 HStack {
                     Button("Вставить"){proxy.draft=NSPasteboard.general.string(forType:.string) ?? ""}
                     Spacer()

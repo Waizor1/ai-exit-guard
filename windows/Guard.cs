@@ -67,7 +67,8 @@ sealed class GuardWindow : Form {
         protected override void OnPaint(PaintEventArgs e){
             bool hover=Enabled && ClientRectangle.Contains(PointToClient(MousePosition));
             PaintSurface(this,e.Graphics,hover?ControlPaint.Light(BackColor,.12f):BackColor,8);
-            TextRenderer.DrawText(e.Graphics,Text,Font,ClientRectangle,Enabled?ForeColor:SystemColors.GrayText,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);
+            var alignment=TextAlign==ContentAlignment.MiddleLeft?TextFormatFlags.Left:TextFormatFlags.HorizontalCenter;
+            TextRenderer.DrawText(e.Graphics,Text,Font,Rectangle.Inflate(ClientRectangle,-Padding.Left,0),Enabled?ForeColor:SystemColors.GrayText,alignment|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
             if(Focused && ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-4,-4),ForeColor,BackColor);
         }
     }
@@ -101,6 +102,20 @@ sealed class GuardWindow : Form {
         var grid=new TableLayoutPanel {AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Top,ColumnCount=1,Padding=new Padding(18,10,18,18)};
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         tab.Controls.Add(grid);pages.TabPages.Add(tab);
+        var header=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=3,Margin=Padding.Empty};
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        if(pages.TabCount>1)header.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0),0,0);
+        var identity=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,Margin=Padding.Empty,WrapContents=true};
+        var name=Copy("AI Exit Guard",true);
+        name.Margin=new Padding(2,8,4,4);
+        identity.Controls.Add(name);
+        var version=Copy(Application.ProductVersion,false);version.Name="ProductVersion";
+        version.AccessibleName="Версия "+version.Text;version.Margin=new Padding(2,8,2,4);
+        identity.Controls.Add(version);header.Controls.Add(identity,1,0);
+        if(pages.TabCount==1)header.Controls.Add(ActionButton("Настройки",(s,e)=>pages.SelectedIndex=1),2,0);
+        grid.Controls.Add(header);
         return grid;
     }
     Label Copy(string text,bool heading) {
@@ -251,36 +266,41 @@ sealed class GuardWindow : Form {
     bool quitting, relayReady;
     Dictionary<string,Reading> leases;
     public GuardWindow(string dataDirectory,bool smoke) {
+        SuspendLayout();
         smokeMode=smoke;
         ownedDomains=Path.Combine(dataDirectory,"managed-domains");
         protection.Checked=false;
         saved=Path.Combine(dataDirectory,"routes.bin");
-        Text="AI Exit Guard"; AutoScaleMode=AutoScaleMode.Font;Font=new Font("Segoe UI",10F);
+        Text="AI Exit Guard"; Font=new Font("Segoe UI",10F);
+        AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
         ClientSize=new Size(450,580);MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
         pages.Appearance=TabAppearance.FlatButtons;pages.SizeMode=TabSizeMode.Fixed;pages.ItemSize=new Size(0,1);pages.TabStop=false;
         Controls.Add(pages);
         var home=Page("Главная");var settings=Page("Настройки");
-        var header=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2};
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.Controls.Add(Copy("AI Exit Guard",true),0,0);
-        header.Controls.Add(ActionButton("Настройки",(s,e)=>pages.SelectedIndex=1),1,0);home.Controls.Add(header);
         summary=Card();
         verdict.Font=new Font(Font.FontFamily,19,FontStyle.Bold);verdict.Margin=new Padding(2,7,2,3);summary.Controls.Add(verdict);
-        status.Dock=DockStyle.Fill;status.Margin=new Padding(2,2,2,8);status.ForeColor=muted;summary.Controls.Add(status);home.Controls.Add(summary);
+        status.AccessibleName="Причина текущего состояния";status.Dock=DockStyle.Fill;status.Margin=new Padding(2,2,2,8);status.ForeColor=muted;summary.Controls.Add(status);home.Controls.Add(summary);
         var results=Card();results.ColumnCount=2;
         results.ColumnStyles[0].Width=45;results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,55));
+        var services=Copy("Сервисы",true);services.Margin=new Padding(4,2,4,4);services.ForeColor=muted;
+        results.Controls.Add(services,0,0);results.SetColumnSpan(services,2);
         for(int i=0;i<3;i++){
+            int row=1+3*i;
             var name=Copy(names[i+1],true);
-            name.Margin=new Padding(4,8,2,4);results.Controls.Add(name,0,2*i);
+            name.Margin=new Padding(4,8,2,4);results.Controls.Add(name,0,row);
             outcomes[i]=Copy("",false);outcomes[i].AccessibleName=names[i+1]+" — статус";
             outcomes[i].TextAlign=ContentAlignment.MiddleRight;outcomes[i].Margin=new Padding(2,8,4,4);
-            results.Controls.Add(outcomes[i],1,2*i);
+            results.Controls.Add(outcomes[i],1,row);
             reasons[i]=Copy("",false);reasons[i].Margin=new Padding(4,0,4,6);
-            results.Controls.Add(reasons[i],0,2*i+1);results.SetColumnSpan(reasons[i],2);
+            results.Controls.Add(reasons[i],0,row+1);results.SetColumnSpan(reasons[i],2);
+            if(i<2){
+                var divider=new Panel{Height=1,Dock=DockStyle.Top,Margin=new Padding(4,1,4,1),BackColor=ControlPaint.Light(card,.12f)};
+                results.Controls.Add(divider,0,row+2);results.SetColumnSpan(divider,2);
+            }
         }
         home.Controls.Add(results);
         var proxyCard=Card();proxyCard.ColumnCount=2;proxyCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var edit=ActionButton("Прокси", (sender,e)=>pages.SelectedIndex=1);edit.TextAlign=ContentAlignment.MiddleLeft;
+        var edit=ActionButton("Добавить прокси", (sender,e)=>pages.SelectedIndex=1);edit.TextAlign=ContentAlignment.MiddleLeft;
         proxyCard.Controls.Add(edit,0,0);proxyBadge.ForeColor=muted;proxyBadge.Anchor=AnchorStyles.Right;
         proxyCard.Controls.Add(proxyBadge,1,0);
         protection.ForeColor=ink;protection.BackColor=card;protection.Font=new Font(Font,FontStyle.Bold);proxyCard.Controls.Add(protection,0,1);proxyCard.SetColumnSpan(protection,2);
@@ -295,11 +315,11 @@ sealed class GuardWindow : Form {
         start.BackColor=accent;start.ForeColor=Color.White;start.FlatStyle=FlatStyle.Flat;start.FlatAppearance.BorderSize=0;
         start.Click+=(s,e)=>{if(relay!=null || retrying) Disconnect();else if(String.IsNullOrWhiteSpace(urls[0].Text)){pages.SelectedIndex=1;urls[0].Focus();}else Connect();};
         var activity=Page("Подключения");
-        activity.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0));
-        var connectionsTitle=Copy("Подключения к ИИ",true);connectionsTitle.Font=new Font(Font.FontFamily,18,FontStyle.Bold);activity.Controls.Add(connectionsTitle);
+        var connectionsTitle=Copy("Активные подключения",true);connectionsTitle.Font=new Font(Font.FontFamily,18,FontStyle.Bold);activity.Controls.Add(connectionsTitle);
         var feed=Card();activity.Controls.Add(feed);connections=new ConnectionPane(feed,card,ink);
         EventHandler openFlows=(s,e)=>{pages.SelectedIndex=2;nextFlows=DateTime.MinValue;};
-        home.Controls.Add(ActionButton("Подключения к ИИ",openFlows));
+        var activityLink=ActionButton("Активные подключения",openFlows);activityLink.Dock=DockStyle.Fill;
+        activityLink.TextAlign=ContentAlignment.MiddleLeft;home.Controls.Add(activityLink);
         var actions=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft,WrapContents=true};
         checkAddress.Text="Проверить адрес";checkAddress.AutoSize=true;checkAddress.FlatStyle=FlatStyle.Flat;
         checkAddress.BackColor=accent;checkAddress.ForeColor=ink;checkAddress.FlatAppearance.BorderSize=0;checkAddress.Padding=new Padding(8,4,8,4);
@@ -310,8 +330,8 @@ sealed class GuardWindow : Form {
             catch(IOException){RelayEnded();}
         };
         actions.Controls.Add(checkAddress);actions.Controls.Add(start);home.Controls.Add(actions);
-        settings.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0));
-        var heading=Copy("Прокси для ИИ",true);heading.Font=new Font(Font.FontFamily,18,FontStyle.Bold);settings.Controls.Add(heading);ProxyInputs(settings,0);
+        var heading=Copy("Общий прокси",true);heading.Font=new Font(Font.FontFamily,18,FontStyle.Bold);settings.Controls.Add(heading);ProxyInputs(settings,0);
+        urls[0].TextChanged+=(s,e)=>edit.Text=String.IsNullOrWhiteSpace(urls[0].Text)?"Добавить прокси":"Прокси";
         var submit=ActionButton("Подключить",(s,e)=>{pages.SelectedIndex=0;if(relay==null)Connect();});
         submit.BackColor=accent;submit.Anchor=AnchorStyles.Right;
         paste[0].Parent.Controls.Add(submit);((TableLayoutPanel)paste[0].Parent).SetCellPosition(submit,new TableLayoutPanelCellPosition(1,4));
@@ -327,7 +347,7 @@ sealed class GuardWindow : Form {
         ShowIdle("Выключен");
         tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWindow();};
         var menu=new ContextMenuStrip();menu.Items.Add("Открыть",null,(s,e)=>ShowWindow());
-        menu.Items.Add("Подключения к ИИ",(Image)null,(s,e)=>{ShowWindow();openFlows(s,e);});menu.Items.Add("Выход",null,(s,e)=>{quitting=true;Close();});tray.ContextMenuStrip=menu;
+        menu.Items.Add("Активные подключения",(Image)null,(s,e)=>{ShowWindow();openFlows(s,e);});menu.Items.Add("Выход",null,(s,e)=>{quitting=true;Close();});tray.ContextMenuStrip=menu;
         FormClosing+=(s,e)=>{if(!quitting && e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();return;}
             if(ProxyOnly && !ReleaseDomains()){quitting=false;e.Cancel=true;ShowWindow();}};
         FormClosed+=(s,e)=>{timer.Stop();Stop();tray.Dispose();detail.Dispose();};
@@ -343,6 +363,7 @@ sealed class GuardWindow : Form {
                 if(!File.Exists(Path.Combine(dataDirectory,"paused")))Shown+=(s,e)=>Connect();
             }catch{State("Не удалось прочитать сохранённые прокси.",false);}
         }
+        ResumeLayout(true);
     }
     void ShowRouteOptions(bool show){
         optionalRoutes.Visible=show;routeOptions.Text=show?"Отдельные прокси  ▾":"Отдельные прокси  ▸";
@@ -358,9 +379,9 @@ sealed class GuardWindow : Form {
     }
     void ShowWindow(){Show();WindowState=FormWindowState.Normal;Activate();}
     void State(string text,bool open){
-        status.Text=text;proxyBadge.Text=relay==null?"Выключен":relayReady?"Подключён":"Подключаем…";
+        status.Text=text;status.AccessibleDescription=text;proxyBadge.Text=relay==null?"Выключен":relayReady?"Подключён":"Подключаем…";
         verdict.Text=open?"Можно работать":relay==null?"Прокси отключён":leases==null?"Проверяем подключение":"Доступ ограничен";
-        bool closed=relay!=null && leases!=null && text=="Доступно сервисов: 0 из 3";
+        bool closed=relay!=null && leases!=null && text.StartsWith("Доступно сервисов: 0 из 3",StringComparison.Ordinal);
         if(closed)verdict.Text="Доступ закрыт";
         verdict.ForeColor=open?Color.LightGreen:closed?Color.LightSalmon:Color.FromArgb(255,195,111);
         summary.BackColor=relay==null?card:open?Color.FromArgb(35,54,46):closed?Color.FromArgb(66,42,44):Color.FromArgb(60,53,42);
@@ -548,6 +569,7 @@ sealed class GuardWindow : Form {
     }
     void RenderReadings(long now){
         int open=0, waiting=0;
+        string firstIssue=null;
         for(int i=0;i<outcomes.Length;i++){
             Reading r;string caption;Color color;
             if(!leases.TryGetValue(names[i+1],out r)){caption="Проверяем…";color=muted;waiting++;}
@@ -556,9 +578,11 @@ sealed class GuardWindow : Form {
             if(outcomes[i].Text!=caption){outcomes[i].Text=caption;outcomes[i].ForeColor=color;}
             string reason=r==null || r.Until>now?"":r.Reason;
             if(r!=null && r.Until<=now && String.IsNullOrEmpty(reason))reason="Срок проверки истёк.";
+            if(firstIssue==null && !String.IsNullOrEmpty(reason))firstIssue=names[i+1]+": "+reason;
             if(reasons[i].Text!=reason)ShowReason(i,reason);
         }
         string current=ProxyOnly?(waiting>0?"Проверяем адреса…":open==3?"Замечаний по адресу нет.":"Есть замечания к выходному IP."):waiting>0?"Идёт проверка…":open==3?"Все три сервиса доступны":"Доступно сервисов: "+open+" из 3";
+        if(firstIssue!=null)current=current.TrimEnd('.','…')+". "+firstIssue;
         if(status.Text!=current)State(current,open==3);
     }
     void SaveSmokeImage(string file){
@@ -577,6 +601,10 @@ sealed class GuardWindow : Form {
         string original="127.0.0.1 localhost\r\n";string on=DomainLock.Edit(original,true);
         if(DomainLock.Edit(on,false)!=original || DomainLock.Edit(on,true)!=on || !on.Contains("127.0.0.2 daily-cloudcode-pa.googleapis.com"))return 18;
         if(!Visible || !IsHandleCreated || !tray.Visible || urls.Length!=4 || schemes.Length!=4)return 11;
+        foreach(TabPage page in pages.TabPages){
+            var labels=page.Controls.Find("ProductVersion",true);
+            if(labels.Length!=1 || labels[0].Text!=Application.ProductVersion)return 33;
+        }
         var initialSize=ClientSize;
         foreach(int width in new[]{650,460}){
             ClientSize=new Size(width,570);PerformLayout();pages.SelectedIndex=0;pages.SelectedTab.PerformLayout();
@@ -630,7 +658,7 @@ sealed class GuardWindow : Form {
         RenderReadings(200);SaveSmokeImage("01-access-open.png");
         leases["Antigravity"]=new Reading{Until=0,Reason="Google не подтвердил страну выхода."};
         RenderReadings(200);SaveSmokeImage("02-one-service-closed.png");
-        if(!reasons[2].Visible || !reasons[2].Text.Contains("страну"))return 22;
+        if(!reasons[2].Visible || !reasons[2].Text.Contains("страну") || !status.Text.Contains("Antigravity: Google"))return 22;
         relayReady=false;protection.Checked=false;relayReady=true;RenderReadings(200);
         if(outcomes[2].Text!="Есть замечание" || !checkAddress.Visible || !reasons[2].Visible)return 23;
         SaveSmokeImage("04-proxy-only-warning.png");

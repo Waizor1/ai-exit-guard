@@ -58,10 +58,10 @@ struct ConnectionReport: View {
     var body: some View {
         let groups = Dictionary(grouping: report.Rows, by: \.App)
         VStack(alignment: .leading, spacing: 8) {
-            Text("Приложений · \(groups.count)     Соединений · \(report.Rows.reduce(0) { $0 + $1.Count })")
-                .font(.subheadline).foregroundStyle(.secondary)
+            Text("Приложений: \(groups.count)  ·  Соединений: \(report.Rows.reduce(0) { $0 + $1.Count })")
+                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
             if groups.isEmpty {
-                Text("Сейчас соединений с ИИ не видно.").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Откройте ИИ-сервис, чтобы увидеть его подключения.").frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: height)
             } else {
                 ScrollView {
@@ -99,7 +99,7 @@ struct ConnectionsPanel: View {
     let height: CGFloat
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Подключения приложений").font(.title2.bold())
+            Text("Активные подключения").font(.title2.bold())
             if let report = list.result {
                 ConnectionReport(report: report, height: height)
                 if list.failed { Text("Не удалось обновить. Показан предыдущий список.") }
