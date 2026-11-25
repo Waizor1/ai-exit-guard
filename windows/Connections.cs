@@ -38,6 +38,25 @@ sealed class ConnectionPane {
         list=new ListView{View=View.Details,FullRowSelect=true,HeaderStyle=ColumnHeaderStyle.Nonclickable,
             Dock=DockStyle.Top,Height=300,BackColor=surface,ForeColor=ink,BorderStyle=BorderStyle.None,
             AccessibleName="Активные соединения и последние попытки"};
+        list.OwnerDraw=true;
+        list.DrawColumnHeader+=(sender,e)=>{
+            using(var brush=new SolidBrush(Color.FromArgb(66,65,65)))e.Graphics.FillRectangle(brush,e.Bounds);
+            TextRenderer.DrawText(e.Graphics,e.Header.Text,list.Font,Rectangle.Inflate(e.Bounds,-4,0),ink,TextFormatFlags.Left|TextFormatFlags.VerticalCenter);
+        };
+        list.DrawItem+=(sender,e)=>{if(list.View!=View.Details)e.DrawDefault=true;};
+        list.DrawSubItem+=(sender,e)=>{
+            Color text=ink;
+            if(e.ColumnIndex==0){
+                switch(e.SubItem.Text){
+                    case "Через Guard":text=Color.LightGreen;break;
+                    case "Ошибка прокси":case "Заблокировано":text=Color.LightSalmon;break;
+                    case "Возможный обход":text=Color.FromArgb(255,195,111);break;
+                }
+            }
+            if(e.Item.Selected)text=SystemColors.HighlightText;
+            using(var brush=new SolidBrush(e.Item.Selected?SystemColors.Highlight:surface))e.Graphics.FillRectangle(brush,e.Bounds);
+            TextRenderer.DrawText(e.Graphics,e.SubItem.Text,list.Font,Rectangle.Inflate(e.Bounds,-3,0),text,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
+        };
         list.Columns.Add("Состояние",128);list.Columns.Add("Адрес",175);list.Columns.Add("Время",62);
         list.Resize+=(s,e)=>list.Columns[1].Width=Math.Max(100,list.ClientSize.Width-211);
         panel.Controls.Add(note);panel.Controls.Add(list);
@@ -54,7 +73,7 @@ sealed class ConnectionPane {
         }catch{outside=new string[0];dnsState="Windows не дала проверить прямые соединения.";}
         finally{nextScan=DateTime.UtcNow.AddSeconds(10);scanning=false;if(!list.IsDisposed)Render();}
     }
-    static string[] FindOutside(){
+    internal static string[] FindOutside(){
         // Read the local DNS cache without sending any DNS or HTTP probes.
         const string query="$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $r=@(Get-DnsClientCache | Where-Object { $_.Type -in 1,28 } | Select-Object Name,Data); ConvertTo-Json -InputObject $r -Compress";
         var info=new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,@"WindowsPowerShell\v1.0\powershell.exe"),
@@ -68,19 +87,27 @@ sealed class ConnectionPane {
             var sockets=IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpConnections();
             var peers=new HashSet<IPAddress>(sockets.Where(t=>t.State==TcpState.Established && t.RemoteEndPoint.Port==443)
                 .Select(t=>t.RemoteEndPoint.Address.MapToIPv6()));
-            var hosts=new HashSet<string>(DomainLock.Names(),StringComparer.OrdinalIgnoreCase);
-            var matches=new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach(var rr in dns){
-                string host=(rr.Name??"").TrimEnd('.');
-                IPAddress ip;
-                if(!IPAddress.TryParse(rr.Data,out ip) || IPAddress.IsLoopback(ip.IsIPv4MappedToIPv6?ip.MapToIPv4():ip) || !peers.Contains(ip.MapToIPv6()))continue;
-                for(string suffix=host;suffix.Length>0;){
-                    if(hosts.Contains(suffix)){matches.Add(host);break;}
-                    int dot=suffix.IndexOf('.');if(dot<0)break;suffix=suffix.Substring(dot+1);
-                }
-            }
-            return matches.ToArray();
+            return MatchOutside(dns,peers);
         }
+    }
+    internal static bool CheckMatching(){
+        var dns=new[]{new DnsEntry{Name="api.openai.com",Data="192.0.2.9"},new DnsEntry{Name="notopenai.com",Data="192.0.2.9"},new DnsEntry{Name="claude.ai",Data="127.0.0.2"}};
+        var peers=new HashSet<IPAddress>(new[]{IPAddress.Parse("192.0.2.9").MapToIPv6(),IPAddress.Parse("127.0.0.2").MapToIPv6()});
+        return MatchOutside(dns,peers).SequenceEqual(new[]{"api.openai.com"});
+    }
+    static string[] MatchOutside(DnsEntry[] dns,HashSet<IPAddress> peers){
+        var hosts=new HashSet<string>(DomainLock.Names(),StringComparer.OrdinalIgnoreCase);
+        var matches=new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach(var rr in dns){
+            string host=(rr.Name??"").TrimEnd('.');
+            IPAddress ip;
+            if(!IPAddress.TryParse(rr.Data,out ip) || IPAddress.IsLoopback(ip.IsIPv4MappedToIPv6?ip.MapToIPv4():ip) || !peers.Contains(ip.MapToIPv6()))continue;
+            for(string suffix=host;suffix.Length>0;){
+                if(hosts.Contains(suffix)){matches.Add(host);break;}
+                int dot=suffix.IndexOf('.');if(dot<0)break;suffix=suffix.Substring(dot+1);
+            }
+        }
+        return matches.ToArray();
     }
     void Render(){
         var rows=new List<string[]>();

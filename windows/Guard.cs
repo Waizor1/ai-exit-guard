@@ -242,8 +242,8 @@ sealed class GuardWindow : Form {
         start.Click+=(s,e)=>{if(relay!=null || retrying) Disconnect();else if(String.IsNullOrWhiteSpace(urls[0].Text)){pages.SelectedIndex=1;urls[0].Focus();}else Connect();};
         var activity=Page("Подключения");
         activity.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0));
-        activity.Controls.Add(Copy("Подключения к ИИ",true));
-        connections=new ConnectionPane(activity,surface,ink);
+        var connectionsTitle=Copy("Подключения к ИИ",true);connectionsTitle.Font=new Font(Font.FontFamily,18,FontStyle.Bold);activity.Controls.Add(connectionsTitle);
+        var feed=Card();activity.Controls.Add(feed);connections=new ConnectionPane(feed,card,ink);
         EventHandler openFlows=(s,e)=>{pages.SelectedIndex=2;nextFlows=DateTime.MinValue;};
         home.Controls.Add(ActionButton("Подключения к ИИ",openFlows));
         var actions=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft,WrapContents=true};
@@ -512,6 +512,8 @@ sealed class GuardWindow : Form {
         }
     }
     int ExerciseForm(){
+        if(!ConnectionPane.CheckMatching())return 29;
+        ConnectionPane.FindOutside();
         protection.Checked=true;
         string original="127.0.0.1 localhost\r\n";string on=DomainLock.Edit(original,true);
         if(DomainLock.Edit(on,false)!=original || DomainLock.Edit(on,true)!=on || !on.Contains("127.0.0.2 daily-cloudcode-pa.googleapis.com"))return 18;
