@@ -19,7 +19,7 @@ sealed class GuardWindow : Form {
     }
     readonly string[] names = {"Общий", "Claude", "ChatGPT", "Antigravity"};
     readonly TextBox[] urls = new TextBox[4];
-    readonly ComboBox[] schemes = new ComboBox[4];
+    readonly ProtocolPicker[] schemes = new ProtocolPicker[4];
     readonly Button[] paste = new Button[4];
     readonly string[] pins = new string[4];
     readonly Label status = new Label { AutoSize=true };
@@ -30,9 +30,9 @@ sealed class GuardWindow : Form {
         public string Reason {get;set;}
     }
     readonly Color ink=Color.FromArgb(246,245,244), muted=Color.FromArgb(198,196,194);
-    readonly Color surface=Color.FromArgb(32,33,36), card=Color.FromArgb(44,46,50), accent=Color.FromArgb(36,99,195);
+    readonly Color surface=Color.FromArgb(43,42,42), card=Color.FromArgb(55,54,54), accent=Color.FromArgb(0,112,232);
     readonly Label[] reasons=new Label[3];
-    readonly Button checkAddress=new Button();
+    readonly Button checkAddress=new SoftButton();
     readonly Label modeHint=new Label {AutoSize=true,Dock=DockStyle.Fill};
     Button routeOptions;
     TableLayoutPanel optionalRoutes;
@@ -40,19 +40,50 @@ sealed class GuardWindow : Form {
     readonly Label verdict=new Label{AutoSize=true,Dock=DockStyle.Fill};
     TableLayoutPanel summary;
     Button ActionButton(string title, EventHandler click) {
-        var button=new Button{Text=title,AutoSize=true,FlatStyle=FlatStyle.Flat,ForeColor=ink,BackColor=card,Padding=new Padding(8,3,8,3)};
+        var button=new SoftButton{Text=title,AutoSize=true,FlatStyle=FlatStyle.Flat,ForeColor=ink,BackColor=card,Padding=new Padding(8,3,8,3)};
         button.Cursor=Cursors.Hand;button.FlatAppearance.BorderSize=0;button.Click+=click;return button;
     }
+    static void PaintSurface(Control control,Graphics g,Color fill,int radius){
+        int w=control.Width-1,h=control.Height-1;
+        if(w<1 || h<1)return;
+        g.Clear(control.Parent==null?fill:control.Parent.BackColor);
+        int d=Math.Min(Math.Min(w,h),radius*2);
+        g.SmoothingMode=SmoothingMode.AntiAlias;
+        using(var path=new GraphicsPath()){
+            path.AddArc(0,0,d,d,180,90);path.AddArc(w-d,0,d,d,270,90);
+            path.AddArc(w-d,h-d,d,d,0,90);path.AddArc(0,h-d,d,d,90,90);path.CloseFigure();
+            using(var brush=new SolidBrush(fill))g.FillPath(brush,path);
+        }
+    }
     sealed class RoundedCard : TableLayoutPanel {
-        protected override void OnSizeChanged(EventArgs e) {
-            base.OnSizeChanged(e);
-            if(Width<20 || Height<20)return;
-            using(var path=new GraphicsPath()){
-                const int d=18;
-                path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);
-                path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();
-                Region old=Region;Region=new Region(path);if(old!=null)old.Dispose();
+        protected override void OnPaintBackground(PaintEventArgs e){PaintSurface(this,e.Graphics,BackColor,14);}
+    }
+    sealed class SoftButton : Button {
+        protected override void OnPaint(PaintEventArgs e){
+            bool hover=Enabled && ClientRectangle.Contains(PointToClient(MousePosition));
+            PaintSurface(this,e.Graphics,hover?ControlPaint.Light(BackColor,.12f):BackColor,8);
+            TextRenderer.DrawText(e.Graphics,Text,Font,ClientRectangle,Enabled?ForeColor:SystemColors.GrayText,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);
+            if(Focused && ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-4,-4),ForeColor,BackColor);
+        }
+    }
+    sealed class ProtocolPicker : TableLayoutPanel {
+        public static readonly string[] Choices={"HTTP","HTTPS","SOCKS5"};
+        public event EventHandler Changed;
+        public string Selected {
+            get{foreach(RadioButton b in Controls)if(b.Checked)return b.Text;return Choices[0];}
+            set{foreach(RadioButton b in Controls)if(b.Text==value)b.Checked=true;}
+        }
+        public ProtocolPicker(){
+            AutoSize=true;Dock=DockStyle.Fill;ColumnCount=3;Margin=new Padding(0,3,0,8);
+            foreach(string choice in Choices){
+                ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100f/3));
+                var b=new RadioButton{Appearance=Appearance.Button,Text=choice,AutoSize=true,TextAlign=ContentAlignment.MiddleCenter,Dock=DockStyle.Fill,FlatStyle=FlatStyle.Flat,Margin=new Padding(0),Padding=new Padding(1,3,1,3)};
+                b.BackColor=Color.FromArgb(63,62,62);b.ForeColor=Color.White;b.FlatAppearance.BorderSize=0;
+                b.FlatAppearance.CheckedBackColor=Color.FromArgb(100,99,98);
+                b.CheckedChanged+=(sender,e)=>{if(b.Checked && Changed!=null)Changed(this,e);};
+                Controls.Add(b);
             }
+            Selected=Choices[0];
         }
     }
     TableLayoutPanel Card() {
@@ -72,18 +103,19 @@ sealed class GuardWindow : Form {
             Font=heading?new Font(Font,FontStyle.Bold):Font,Margin=new Padding(2,heading?12:4,2,4)};
     }
     void ProxyInputs(TableLayoutPanel grid,int i) {
-        var fields=new TableLayoutPanel {AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2};
+        var fields=Card();fields.ColumnCount=2;fields.ColumnStyles.Clear();
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         fields.Controls.Add(Copy("Протокол",false),0,0);
-        schemes[i]=new ComboBox{AccessibleName=names[i]+" — протокол",DropDownStyle=ComboBoxStyle.DropDownList,Dock=DockStyle.Fill};
-        schemes[i].Items.AddRange(new object[]{"HTTP","HTTPS","SOCKS5"});
-        schemes[i].SelectedIndex=0;
-        fields.Controls.Add(schemes[i],0,1);
+        schemes[i]=new ProtocolPicker{AccessibleName=names[i]+" — протокол"};
+        fields.Controls.Add(schemes[i],0,1);fields.SetColumnSpan(schemes[i],2);
         var hint=Copy("Строка прокси · логин:пароль@адрес:порт",false);
         fields.Controls.Add(hint,0,2);fields.SetColumnSpan(hint,2);
         urls[i]=new TextBox{AccessibleName=names[i]+" — строка прокси",Anchor=AnchorStyles.Left|AnchorStyles.Right,UseSystemPasswordChar=true};
-        fields.Controls.Add(urls[i],0,3);
+        var input=new RoundedCard{Dock=DockStyle.Fill,AutoSize=true,ColumnCount=1,BackColor=Color.FromArgb(28,28,28),Padding=new Padding(8,6,8,6),Margin=new Padding(0,4,0,5)};
+        input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        urls[i].BackColor=input.BackColor;urls[i].ForeColor=ink;urls[i].BorderStyle=BorderStyle.None;
+        input.Controls.Add(urls[i]);fields.Controls.Add(input,0,3);fields.SetColumnSpan(input,2);
         paste[i]=ActionButton("Вставить",(sender,e)=>{
             try{
                 string line=Clipboard.GetText().Trim();
@@ -92,8 +124,8 @@ sealed class GuardWindow : Form {
             }catch(System.Runtime.InteropServices.ExternalException){MessageBox.Show(this,"Буфер обмена занят. Попробуйте ещё раз.");}
         });
         paste[i].AccessibleName="Вставить прокси — "+names[i];
-        fields.Controls.Add(paste[i],1,3);
-        schemes[i].SelectedIndexChanged+=(sender,e)=>pins[i]=null;
+        fields.Controls.Add(paste[i],0,4);
+        schemes[i].Changed+=(sender,e)=>pins[i]=null;
         urls[i].TextChanged+=(sender,e)=>{
             pins[i]=null;
             string raw=urls[i].Text.Trim();
@@ -101,8 +133,8 @@ sealed class GuardWindow : Form {
             if(separator<1)return;
             string scheme=raw.Substring(0,separator).ToUpperInvariant();
             if(scheme=="SOCKS5H")scheme="SOCKS5";
-            if(!schemes[i].Items.Contains(scheme))return;
-            schemes[i].SelectedItem=scheme;
+            if(Array.IndexOf(ProtocolPicker.Choices,scheme)<0)return;
+            schemes[i].Selected=scheme;
             urls[i].Text=raw.Substring(separator+3);
             urls[i].SelectionStart=urls[i].TextLength;
         };
@@ -147,7 +179,7 @@ sealed class GuardWindow : Form {
     bool routingSetup, checkingProxy, retrying;
     int retryDelay=1;
     DateTime retryAt, readySince;
-    readonly Button start = new Button();
+    readonly Button start = new SoftButton();
     readonly NotifyIcon tray = new NotifyIcon();
     readonly ToolTip detail=new ToolTip();
     readonly Timer timer = new Timer();
@@ -213,8 +245,10 @@ sealed class GuardWindow : Form {
         };
         actions.Controls.Add(checkAddress);actions.Controls.Add(start);home.Controls.Add(actions);
         settings.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0));
-        settings.Controls.Add(Copy("Общий прокси",true));ProxyInputs(settings,0);
-        settings.Controls.Add(ActionButton("Подключить",(s,e)=>{pages.SelectedIndex=0;if(relay==null)Connect();}));
+        var heading=Copy("Прокси для ИИ",true);heading.Font=new Font(Font.FontFamily,18,FontStyle.Bold);settings.Controls.Add(heading);ProxyInputs(settings,0);
+        var submit=ActionButton("Подключить",(s,e)=>{pages.SelectedIndex=0;if(relay==null)Connect();});
+        submit.BackColor=accent;submit.Anchor=AnchorStyles.Right;
+        paste[0].Parent.Controls.Add(submit);((TableLayoutPanel)paste[0].Parent).SetCellPosition(submit,new TableLayoutPanelCellPosition(1,4));
         routeOptions=ActionButton("Отдельные прокси  ▸",(sender,e)=>ShowRouteOptions(!optionalRoutes.Visible));
         settings.Controls.Add(routeOptions);
         optionalRoutes=Card();settings.Controls.Add(optionalRoutes);
@@ -266,7 +300,7 @@ sealed class GuardWindow : Form {
         summary.BackColor=relay==null?card:open?Color.FromArgb(35,54,46):closed?Color.FromArgb(66,42,44):Color.FromArgb(60,53,42);
         if(relay==null)verdict.ForeColor=ink;
         bool routing=ProxyOnly && relayReady;
-        if(routing){verdict.Text="Только прокси";verdict.ForeColor=ink;summary.BackColor=card;}
+        if(routing){verdict.Text="Только прокси";verdict.ForeColor=ink;summary.BackColor=leases==null?card:open?Color.FromArgb(48,60,48):Color.FromArgb(66,54,44);}
         checkAddress.Visible=routing;start.BackColor=routing?card:accent;
         tray.Text="Guard · "+verdict.Text;tray.Icon=routing?SystemIcons.Shield:open?SystemIcons.Information:closed?SystemIcons.Error:SystemIcons.Warning;
     }
@@ -308,7 +342,7 @@ sealed class GuardWindow : Form {
             var profiles=new Dictionary<string,object>();var routes=new List<Route>();object common=null;
             for(int i=0;i<4;i++) {
                 string url=urls[i].Text.Trim(), ip=pins[i] ?? "";
-                var route=new Route{Address=url==""?"":schemes[i].Text.ToLowerInvariant()+"://"+url,IP=ip,ProxyOnly=i==0 && ProxyOnly,AllowGoogleCountryMismatch=i==0 && allowMismatch.Checked};
+                var route=new Route{Address=url==""?"":schemes[i].Selected.ToLowerInvariant()+"://"+url,IP=ip,ProxyOnly=i==0 && ProxyOnly,AllowGoogleCountryMismatch=i==0 && allowMismatch.Checked};
                 routes.Add(route);
                 if(url=="" && ip=="" && i>0)continue;
                 System.Net.IPAddress parsed;
@@ -447,8 +481,8 @@ sealed class GuardWindow : Form {
         string folder=Environment.GetEnvironmentVariable("GUARD_UI_SCREENSHOTS");
         if(String.IsNullOrEmpty(folder))return;
         Directory.CreateDirectory(folder);PerformLayout();Update();
-        using(var image=new Bitmap(pages.Width,pages.Height)){
-            pages.DrawToBitmap(image,new Rectangle(Point.Empty,pages.Size));
+        using(var image=new Bitmap(pages.SelectedTab.Width,pages.SelectedTab.Height)){
+            pages.SelectedTab.DrawToBitmap(image,new Rectangle(Point.Empty,pages.SelectedTab.Size));
             image.Save(Path.Combine(folder,file),System.Drawing.Imaging.ImageFormat.Png);
         }
     }
@@ -472,9 +506,9 @@ sealed class GuardWindow : Form {
             if(!urls[i].Created || !paste[i].Created || !schemes[i].Created || paste[i].Width<60 || urls[i].Width<80)return 12;
         }
         Clipboard.SetText("socks5://demo:pass@proxy.example:8000");paste[1].PerformClick();
-        if(schemes[1].Text!="SOCKS5" || urls[1].Text!="demo:pass@proxy.example:8000")return 24;
+        if(schemes[1].Selected!="SOCKS5" || urls[1].Text!="demo:pass@proxy.example:8000")return 24;
         if(json.Serialize(Endpoint("https://proxy.example:8000:demo:p:a"))!=json.Serialize(Endpoint("https://demo:p%3Aa@proxy.example:8000")))return 25;
-        pins[1]="192.0.2.1";schemes[1].SelectedItem="HTTPS";
+        pins[1]="192.0.2.1";schemes[1].Selected="HTTPS";
         if(pins[1]!=null)return 26;
         urls[1].Text="";
         pages.SelectedIndex=1;ShowRouteOptions(false);
