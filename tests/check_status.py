@@ -96,7 +96,10 @@ fields.username="al:ice@/#?%"
 fields.password="p@:/?#% å"
 fields.scheme="socks5"
 let assembled=try! ProxyEndpoint(fields.connectionLine(),scheme:"http")
-precondition(assembled.Scheme=="socks5" && assembled.User==fields.username && assembled.Password==fields.password && assembled.Host=="2001:db8::1")
+precondition(assembled.Scheme=="socks5", "form protocol changed")
+precondition(assembled.User==fields.username, "form username failed to round trip")
+precondition(assembled.Password==fields.password, "form password failed to round trip")
+precondition(assembled.Host=="2001:db8::1", "form IPv6 address changed")
 try! fields.importLine("socks5h://proxy.example.test:1080")
 precondition(fields.scheme=="socks5" && fields.password.isEmpty)
 var freshInput=ProxyInput()

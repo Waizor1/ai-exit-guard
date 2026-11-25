@@ -9,6 +9,8 @@ import (
 	"slices"
 	"syscall"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 func TestEvidenceAndReset(t *testing.T) {
@@ -174,5 +176,53 @@ func TestBatchBoundAndRotation(t *testing.T) {
 	}
 	if len(seen) != 25 {
 		t.Fatal("starved", len(seen))
+	}
+}
+
+func TestCompletedHostSurvivesIndependentDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fast, slow := "mcp.linear.app", "mcp.figma.com"
+		good := netip.MustParseAddr("9.9.9.9")
+		stalled := netip.MustParseAddr("8.8.4.4")
+		tracker := Tracker{previous: map[string]bool{fast: true, slow: true}}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		system := func(context.Context, string) ([]netip.Addr, error) { return nil, ErrNoDNSAnswer }
+		alt := func(_ context.Context, h string) ([]netip.Addr, error) {
+			if h == slow {
+				return []netip.Addr{good, stalled}, nil
+			}
+			return []netip.Addr{good}, nil
+		}
+		probe := func(ctx context.Context, _ string, ip netip.Addr) error {
+			if ip == stalled {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		}
+		got := tracker.scan(ctx, []string{slow, fast}, func(string) bool { return false }, system, alt, probe)
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) || !slices.Equal(got[fast], []netip.Addr{good}) || len(got) != 1 || tracker.previous[slow] {
+			t.Fatal("deadline lost completed host or retained partial host", got)
+		}
+		canceled, stop := context.WithCancel(context.Background())
+		stop()
+		got = tracker.scan(canceled, []string{fast}, func(string) bool { return false }, system, alt, probe)
+		if len(got) != 0 || len(tracker.previous) != 0 {
+			t.Fatal("explicit cancellation retained stale evidence")
+		}
+	})
+}
+func TestMixedNativeTLSResultsRequireAllToFail(t *testing.T) {
+	a, b := netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("9.9.9.9")
+	lookup := func(context.Context, string) ([]netip.Addr, error) { return []netip.Addr{a, b}, nil }
+	probe := func(_ context.Context, _ string, ip netip.Addr) error {
+		if ip == a {
+			return nil
+		}
+		return syscall.ECONNRESET
+	}
+	if _, failed := nativeFailure(context.Background(), "mcp.linear.app", lookup, probe); failed {
+		t.Fatal("one reachable native IP must suppress alternate DNS")
 	}
 }
