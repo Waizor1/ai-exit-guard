@@ -21,6 +21,8 @@ sealed class GuardWindow : Form {
     readonly TextBox[] urls = new TextBox[4];
     readonly ProtocolPicker[] schemes = new ProtocolPicker[4];
     readonly Button[] paste = new Button[4];
+    readonly CheckBox[] byField=new CheckBox[4];
+    readonly TextBox[] addresses=new TextBox[4], logins=new TextBox[4], passwords=new TextBox[4];
     readonly CheckBox[] reveal=new CheckBox[4];
     ConnectionPane connections;
     DateTime nextFlows;
@@ -105,6 +107,31 @@ sealed class GuardWindow : Form {
         return new Label {Text=text,AutoSize=true,Dock=DockStyle.Fill,ForeColor=heading?ink:muted,
             Font=heading?new Font(Font,FontStyle.Bold):Font,Margin=new Padding(2,heading?12:4,2,4)};
     }
+    RoundedCard EntryBox(TextBox input){
+        var box=new RoundedCard{Dock=DockStyle.Fill,AutoSize=true,ColumnCount=1,BackColor=Color.FromArgb(28,28,28),Padding=new Padding(8,6,8,6),Margin=new Padding(0,4,0,5)};
+        box.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        input.Anchor=AnchorStyles.Left|AnchorStyles.Right;input.BackColor=box.BackColor;input.ForeColor=ink;input.BorderStyle=BorderStyle.None;
+        box.Controls.Add(input);return box;
+    }
+    TextBox AddEntry(TableLayoutPanel panel,string label,int i){
+        var entry=new TextBox{AccessibleName=names[i]+" — "+label};
+        panel.Controls.Add(Copy(label,false));panel.Controls.Add(EntryBox(entry));
+        return entry;
+    }
+    string FieldLine(int i){
+        string host=addresses[i].Text.Trim(),user=logins[i].Text,password=passwords[i].Text;
+        if(user=="" && password=="")return host;
+        return Uri.EscapeDataString(user)+":"+Uri.EscapeDataString(password)+"@"+host;
+    }
+    bool ValidFields(int i){
+        string host=addresses[i].Text.Trim();
+        if(host=="")return logins[i].Text=="" && passwords[i].Text=="";
+        int port;Uri uri;
+        int colon=host.LastIndexOf(':');
+        return colon>0 && int.TryParse(host.Substring(colon+1),out port) && port>0 && port<=65535 &&
+            host.IndexOfAny(new[]{'@','/','?','#','\\',' '})<0 && Uri.TryCreate("http://"+host,UriKind.Absolute,out uri) &&
+            uri.Port==port && (passwords[i].Text=="" || logins[i].Text!="");
+    }
     void ProxyInputs(TableLayoutPanel grid,int i) {
         var fields=Card();fields.ColumnCount=2;fields.ColumnStyles.Clear();
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
@@ -115,10 +142,9 @@ sealed class GuardWindow : Form {
         var hint=Copy("Строка прокси · логин:пароль@адрес:порт",false);
         fields.Controls.Add(hint,0,2);fields.SetColumnSpan(hint,2);
         urls[i]=new TextBox{AccessibleName=names[i]+" — строка прокси",Anchor=AnchorStyles.Left|AnchorStyles.Right,UseSystemPasswordChar=false};
-        var input=new RoundedCard{Dock=DockStyle.Fill,AutoSize=true,ColumnCount=1,BackColor=Color.FromArgb(28,28,28),Padding=new Padding(8,6,8,6),Margin=new Padding(0,4,0,5)};
-        input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        urls[i].BackColor=input.BackColor;urls[i].ForeColor=ink;urls[i].BorderStyle=BorderStyle.None;
-        input.Controls.Add(urls[i]);fields.Controls.Add(input,0,3);fields.SetColumnSpan(input,2);
+        var slot=new TableLayoutPanel{ColumnCount=1,Dock=DockStyle.Fill,AutoSize=true,Margin=Padding.Empty};slot.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        fields.Controls.Add(slot,0,3);fields.SetColumnSpan(slot,2);
+        var input=EntryBox(urls[i]);slot.Controls.Add(input);
         paste[i]=ActionButton("Вставить",(sender,e)=>{
             try{
                 string line=Clipboard.GetText().Trim();
@@ -142,7 +168,35 @@ sealed class GuardWindow : Form {
             urls[i].SelectionStart=urls[i].TextLength;
         };
         reveal[i]=new CheckBox{Text="Показывать строку",Checked=true,AutoSize=true,ForeColor=ink,Dock=DockStyle.Fill};
-        reveal[i].CheckedChanged+=(sender,e)=>urls[i].UseSystemPasswordChar=!reveal[i].Checked;
+        var parts=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Top,ColumnCount=1,Margin=Padding.Empty,Visible=false};
+        parts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        addresses[i]=AddEntry(parts,"Адрес и порт",i);
+        logins[i]=AddEntry(parts,"Логин",i);passwords[i]=AddEntry(parts,"Пароль",i);
+        slot.Controls.Add(parts);
+        byField[i]=new CheckBox{Text="Ввести по полям",AutoSize=true,ForeColor=ink};
+        fields.Controls.Add(byField[i],1,0);
+        bool filling=false;
+        byField[i].CheckedChanged+=(sender,e)=>{
+            bool split=byField[i].Checked;
+            if(split){
+                filling=true;
+                try{
+                    string raw=urls[i].Text.Trim();
+                    if(raw.Length==0){addresses[i].Clear();logins[i].Clear();passwords[i].Clear();}
+                    else{
+                        var ep=Endpoint(schemes[i].Selected.ToLowerInvariant()+"://"+raw);
+                        addresses[i].Text=(ep.Host.Contains(":")?"["+ep.Host.Trim('[',']')+"]":ep.Host)+":"+ep.Port;
+                        logins[i].Text=ep.User;passwords[i].Text=ep.Password;
+                    }
+                }catch(FormatException){addresses[i].Text=urls[i].Text;logins[i].Clear();passwords[i].Clear();}
+                finally{filling=false;}
+            }
+            input.Visible=hint.Visible=paste[i].Visible=!split;parts.Visible=split;
+            reveal[i].Text=split?"Показывать пароль":"Показывать строку";
+        };
+        foreach(var part in new[]{addresses[i],logins[i],passwords[i]})
+            part.TextChanged+=(sender,e)=>{if(byField[i].Checked && !filling)urls[i].Text=FieldLine(i);};
+        reveal[i].CheckedChanged+=(sender,e)=>{urls[i].UseSystemPasswordChar=passwords[i].UseSystemPasswordChar=!reveal[i].Checked;};
         fields.Controls.Add(reveal[i],0,5);fields.SetColumnSpan(reveal[i],2);
         grid.Controls.Add(fields);
     }
@@ -316,7 +370,11 @@ sealed class GuardWindow : Form {
         checkAddress.Visible=routing;start.BackColor=routing?card:accent;
         tray.Text="Guard · "+verdict.Text;tray.Icon=routing?SystemIcons.Shield:open?SystemIcons.Information:closed?SystemIcons.Error:SystemIcons.Warning;
     }
-    object Endpoint(string text) {
+    sealed class ProxyEndpoint {
+        public string Scheme,Host,User,Password;
+        public int Port;
+    }
+    ProxyEndpoint Endpoint(string text) {
         Uri u;
         int split=text.IndexOf("://",StringComparison.Ordinal);
         if(split<1)throw new FormatException();
@@ -330,7 +388,7 @@ sealed class GuardWindow : Form {
         }
         if(!Uri.TryCreate(text,UriKind.Absolute,out u) || (u.Scheme!="http" && u.Scheme!="https" && u.Scheme!="socks5") || u.Port<1 || u.AbsolutePath.Trim('/').Length>0 || u.Query!="" || u.Fragment!="") throw new FormatException();
         string[] auth=u.UserInfo.Split(new[]{':'},2);
-        return new {Scheme=u.Scheme, Host=u.DnsSafeHost, Port=u.Port, User=Uri.UnescapeDataString(auth[0]),Password=auth.Length>1?Uri.UnescapeDataString(auth[1]):""};
+        return new ProxyEndpoint {Scheme=u.Scheme, Host=u.DnsSafeHost, Port=u.Port, User=Uri.UnescapeDataString(auth[0]),Password=auth.Length>1?Uri.UnescapeDataString(auth[1]):""};
     }
     async Task<string> MeasureExit(object endpoint,int index){
         var request=json.Deserialize<Dictionary<string,object>>(json.Serialize(endpoint));
@@ -353,6 +411,7 @@ sealed class GuardWindow : Form {
         try {
             var profiles=new Dictionary<string,object>();var routes=new List<Route>();object common=null;
             for(int i=0;i<4;i++) {
+                if(byField[i].Checked && !ValidFields(i)){State("Проверьте адрес и порт прокси. Если указан пароль, заполните логин.",false);return;}
                 string url=urls[i].Text.Trim(), ip=pins[i] ?? "";
                 var route=new Route{Address=url==""?"":schemes[i].Selected.ToLowerInvariant()+"://"+url,IP=ip,ProxyOnly=i==0 && ProxyOnly,AllowGoogleCountryMismatch=i==0 && allowMismatch.Checked};
                 routes.Add(route);
@@ -388,7 +447,7 @@ sealed class GuardWindow : Form {
             if(!IsDisposed && !Disposing){start.Enabled=true;Inputs(relay==null);}
         }
     }
-    void Inputs(bool enabled){protection.Enabled=enabled || relayReady;allowMismatch.Enabled=enabled;foreach(var t in urls)t.Enabled=enabled;foreach(var t in schemes)t.Enabled=enabled;foreach(var t in paste)t.Enabled=enabled;}
+    void Inputs(bool enabled){protection.Enabled=enabled || relayReady;allowMismatch.Enabled=enabled;foreach(var t in urls)t.Enabled=enabled;foreach(var t in schemes)t.Enabled=enabled;foreach(var t in paste)t.Enabled=enabled;foreach(var group in new[]{addresses,logins,passwords})foreach(var field in group)field.Enabled=enabled;}
     bool DomainRulesPresent(){
         try{return DomainLock.Enabled();}catch{return false;}
     }
@@ -543,6 +602,13 @@ sealed class GuardWindow : Form {
         if(urls[0].UseSystemPasswordChar)return 27;
         reveal[0].Checked=false;if(!urls[0].UseSystemPasswordChar)return 28;reveal[0].Checked=true;
         pages.SelectedTab.PerformLayout();SaveSmokeImage("03-settings.png");
+        byField[0].Checked=true;
+        if(addresses[0].Text!="proxy.example:8000" || logins[0].Text!="demo" || passwords[0].Text!="example")return 30;
+        passwords[0].Text="pass@:/#";var parsed=Endpoint("http://"+urls[0].Text);
+        if(!ValidFields(0) || parsed.Password!="pass@:/#" || parsed.User!="demo")return 31;
+        addresses[0].Text="proxy.example";if(ValidFields(0))return 32;
+        addresses[0].Text="proxy.example:8000";passwords[0].Text="example";
+        pages.SelectedTab.PerformLayout();SaveSmokeImage("06-separate-fields.png");byField[0].Checked=false;
         pages.SelectedIndex=2;
         connections.Update(new[]{new ConnectionPane.Flow{Domain="api.openai.com",Status="active"},new ConnectionPane.Flow{Domain="api.anthropic.com",Status="blocked",At=DateTimeOffset.UtcNow.ToUnixTimeSeconds()}},true);
         pages.SelectedTab.PerformLayout();SaveSmokeImage("05-connections.png");
