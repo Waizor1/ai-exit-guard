@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,8 +26,9 @@ type individualProxy struct {
 	Expected string
 }
 type proxyPlan struct {
-	Common   proxySpec
-	Profiles map[string]individualProxy
+	Common       proxySpec
+	Profiles     map[string]individualProxy
+	CommonPaused bool
 }
 
 func (p proxyPlan) valid() bool {
@@ -43,11 +45,11 @@ func (p proxyPlan) valid() bool {
 	}
 	return true
 }
-func (p proxyPlan) endpoint(service string) proxySpec {
+func (p proxyPlan) activeEndpoint(service string) (proxySpec, bool) {
 	if individual, ok := p.Profiles[service]; ok {
-		return individual.Endpoint
+		return individual.Endpoint, true
 	}
-	return p.Common
+	return p.Common, !p.CommonPaused
 }
 
 func serviceForHost(host string) string {
@@ -82,8 +84,15 @@ func (r *serviceRelay) configure(p proxyPlan) {
 		r.routes = make(map[string]proxySpec)
 	}
 	for _, name := range services {
-		ep := p.endpoint(name)
+		ep, active := p.activeEndpoint(name)
 		old, ok := r.routes[name]
+		if !active {
+			if ok {
+				old.gate.set(time.Time{})
+				delete(r.routes, name)
+			}
+			continue
+		}
 		if ok && ep.Scheme == old.Scheme && ep.Host == old.Host && ep.Port == old.Port && ep.User == old.User && ep.Password == old.Password {
 			continue
 		}
@@ -111,16 +120,27 @@ func (r *serviceRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	host, _, _ := net.SplitHostPort(req.Host)
 	r.mu.RLock()
-	s, ok := r.routes[serviceForHost(host)]
+	service := serviceForHost(host)
+	s, ok := r.routes[service]
 	r.mu.RUnlock()
-	if !ok {
+	if service == "" {
 		http.Error(w, "Destination outside AI route", 403)
+		return
+	}
+	if !ok {
+		r.activity.record(host, "blocked")
+		http.Error(w, "Common proxy is paused", http.StatusServiceUnavailable)
 		return
 	}
 	s.ServeHTTP(w, req)
 }
 func (r *serviceRelay) control(line string) string {
-	if line == "mode proxy-only" || line == "mode guarded" {
+	payload, hasDeadlines := strings.CutPrefix(line, "mode guarded ")
+	if line == "mode proxy-only" || line == "mode guarded" || hasDeadlines {
+		var deadlines map[string]int64
+		if hasDeadlines && json.Unmarshal([]byte(payload), &deadlines) != nil {
+			return "ERROR"
+		}
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		enabled := line == "mode proxy-only"
@@ -128,11 +148,11 @@ func (r *serviceRelay) control(line string) string {
 			return "READY"
 		}
 		r.proxyOnly = enabled
-		for _, route := range r.routes {
+		for service, route := range r.routes {
 			if r.proxyOnly {
 				route.gate.proxyOnly()
 			} else {
-				route.gate.set(time.Time{})
+				route.gate.set(time.Unix(deadlines[service], 0))
 			}
 		}
 		return "READY"
@@ -161,8 +181,11 @@ func (r *serviceRelay) control(line string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	s, ok := r.routes[verb]
-	if !ok || err != nil {
+	if err != nil || !slices.Contains(services, verb) {
 		return "ERROR"
+	}
+	if !ok {
+		return "CLOSED"
 	}
 	// Diagnostics queued before a mode change must not close a working tunnel.
 	if r.proxyOnly {
@@ -252,7 +275,10 @@ func collectPlan(ctx context.Context, p proxyPlan, emit func(result) error) int 
 	// Share IP123 trust and IPinfo lookups for services using the same endpoint.
 	groups := map[proxySpec][]target{}
 	for _, t := range targets {
-		ep := p.endpoint(serviceForHost(t.host))
+		ep, active := p.activeEndpoint(serviceForHost(t.host))
+		if !active {
+			continue
+		}
 		groups[ep] = append(groups[ep], t)
 	}
 	for ep, ts := range groups {
@@ -269,8 +295,10 @@ func collectPlan(ctx context.Context, p proxyPlan, emit func(result) error) int 
 			}
 		}(ep, ts)
 	}
-	wg.Add(1)
-	go func() { defer wg.Done(); out <- checkGoogle(ctx, p.endpoint("Antigravity")) }()
+	if ep, active := p.activeEndpoint("Antigravity"); active {
+		wg.Add(1)
+		go func() { defer wg.Done(); out <- checkGoogle(ctx, ep) }()
+	}
 	go func() { wg.Wait(); close(out) }()
 	failed := 0
 	for v := range out {

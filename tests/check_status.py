@@ -23,8 +23,13 @@ if [ "$1" = proxy-serve ]; then
     echo $$ >> "$(dirname "$0")/relay-pids"
     echo READY
     while IFS= read -r line; do
-        case "$line" in "mode proxy-only"|"mode guarded") echo READY;; *" 1"|*" 0"|0) echo CLOSED;; *) echo OPEN;; esac
+        case "$line" in "config "*|"mode proxy-only"|"mode guarded") echo READY;; *" 1"|*" 0"|0) echo CLOSED;; *) echo OPEN;; esac
     done
+elif [ "$1" = proxy-profile-check ]; then
+    IFS= read -r config
+    case "$config" in *192.0.2.99*) status=changed;; *) status=ok;; esac
+    case "$config" in *3129*) ip=192.0.2.11;; *) ip=192.0.2.10;; esac
+    printf '{"Status":"%s","Country":"DE","IP":"%s"}\n' "$status" "$ip"
 elif [ "$1" = proxy-check ]; then
     cat >/dev/null; echo 192.0.2.10
 else
@@ -48,6 +53,11 @@ fi
 enum ProxyVault {
     static var value:Data?
     static func save(_ data:Data)throws {value=data}
+    static var unreadable=false
+    static func readForUpdate()throws -> Data? {
+        if unreadable{throw ProxyIssue("keychain unavailable")}
+        return value
+    }
     static func read()->Data? {value}
     static func clear(){value=nil}
 }
@@ -336,8 +346,9 @@ precondition(!SystemRoute.routeEnabled && ProxyVault.read()==dummy)
 precondition(ProxyClient().expected=="192.0.2.1")
 precondition(UserDefaults.standard.bool(forKey:"restoreGuardPAC"))
 m.proxy.disconnect()
-precondition(ProxyVault.read()==nil && ProxyClient().expected.isEmpty)
+precondition(ProxyVault.read()==dummy && ProxyClient().paused && ProxyClient().expected.isEmpty)
 // A fresh connect, ordinary quit, restore and explicit disconnect share ownership.
+ProxyVault.clear(); UserDefaults.standard.removeObject(forKey:"proxyExpected")
 let client=ProxyClient()
 client.expected=""
 let connectedDefaults=UserDefaults.standard
@@ -354,6 +365,46 @@ client.restore()
 precondition(client.ready && DirectRouteLock.read() == .on)
 client.disconnect()
 precondition(!client.ready && !client.proxyOnly && !client.managesDomains && DirectRouteLock.read() == .off)
+let restarted=ProxyClient()
+var savedPlan=try! ProxyPlan.load(ProxyVault.read()!)
+savedPlan.Profiles["Antigravity"]=IndividualProxy(Endpoint:try! ProxyEndpoint("127.0.0.1:3129",scheme:"http"),Expected:"192.0.2.11")
+let storedPlan=try! JSONEncoder().encode(savedPlan)
+try! ProxyVault.save(storedPlan)
+restarted.restore()
+precondition(restarted.paused && !restarted.ready && restarted.savedIP=="192.0.2.10" && !SystemRoute.routeEnabled)
+connectedDefaults.set("192.0.2.99",forKey:"proxyExpected")
+restarted.resumeSaved()
+waitUntil{!restarted.busy}
+precondition(restarted.paused && !restarted.ready && !SystemRoute.routeEnabled && (try! ProxyPlan.load(ProxyVault.read()!)).Profiles["Antigravity"]?.Expected=="192.0.2.11")
+connectedDefaults.set("192.0.2.10",forKey:"proxyExpected")
+restarted.resumeSaved()
+waitUntil{!restarted.busy}
+precondition(restarted.expectedIP("Antigravity")=="192.0.2.11")
+precondition(restarted.ready && !restarted.paused && (try! ProxyPlan.load(ProxyVault.read()!)).Profiles["Antigravity"]?.Expected=="192.0.2.11")
+let first=restarted.library.entries[0]
+let archived=ProxyVault.read()
+ProxyVault.unreadable=true
+restarted.connect("http://127.0.0.1:3130","http")
+waitUntil{!restarted.busy}
+precondition(restarted.ready && restarted.library.current==first.id && ProxyVault.read()==archived && restarted.plan?.Common.Port==3128)
+ProxyVault.unreadable=false
+restarted.connect("http://127.0.0.1:3130","http")
+waitUntil{!restarted.busy}
+precondition(restarted.library.entries.count==2 && restarted.library.current != first.id)
+restarted.selectSaved(first)
+waitUntil{!restarted.busy}
+precondition(restarted.library.current==first.id && restarted.expectedIP("Antigravity")=="192.0.2.11")
+restarted.checkLibrary()
+waitUntil{!restarted.measuring}
+precondition(restarted.observations[first.id]?.contains("Германия")==true)
+restarted.disconnect()
+precondition(restarted.ready && restarted.plan?.CommonPaused==true && !restarted.isOpen("Claude") && restarted.isOpen("Antigravity"))
+restarted.shutdown()
+let individualOnly=ProxyClient();individualOnly.restore()
+precondition(individualOnly.ready && individualOnly.plan?.CommonPaused==true && !individualOnly.isOpen("ChatGPT") && individualOnly.isOpen("Antigravity"))
+individualOnly.setCommonPaused(false);waitUntil{!individualOnly.busy}
+precondition(individualOnly.ready && individualOnly.isOpen("Claude"))
+individualOnly.disconnectAll()
 DirectRouteLock.fixtureState = .on
 client.connect("http://127.0.0.1:3128","http")
 waitUntil{!client.busy}

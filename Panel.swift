@@ -2,6 +2,16 @@ import SwiftUI
 
 struct GuardPanel: View {
     @ObservedObject var model: Monitor
+    @ObservedObject private var proxy: ProxyClient
+    init(model:Monitor) {
+        self.model=model
+        self.proxy=model.proxy
+    }
+    private func paused(_ service:String?) -> Bool {
+        if proxy.paused {return true}
+        guard let service,let plan=proxy.plan else{return false}
+        return plan.CommonPaused == true && plan.Profiles[service] == nil
+    }
     private func hosts(_ service:String) -> [String] {
         Monitor.serviceHosts(service)
     }
@@ -67,7 +77,13 @@ struct GuardPanel: View {
                     diagnostics(host,service)
                 }
             } else {
-                if proxyMode && model.selectedService == nil {
+                if paused(model.selectedService) {
+                    VStack(alignment:.leading,spacing:6) {
+                        Label("Прокси на паузе",systemImage:"pause.circle").font(.title2.bold())
+                        Text("Чтобы продолжить, откройте «Прокси» и подключите сохранённый профиль.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    }.padding(.vertical,6)
+                } else if proxyMode && model.selectedService == nil {
                     VStack(alignment:.leading,spacing:6) {
                         Label(model.online ? "Только прокси" : "Нет сети",systemImage:model.online ? "network" : "wifi.slash")
                             .font(.title2.bold())
@@ -116,14 +132,21 @@ struct GuardPanel: View {
                     }.padding(.horizontal,10)
                 }
                 if model.selectedService == nil {
-                    MainProxyCard(monitor:model,proxy:model.proxy)
+                    MainProxyCard(monitor:model,proxy:proxy)
+                    Button {model.showConnections=true} label:{
+                        HStack {
+                            Label("Подключения приложений",systemImage:"arrow.left.arrow.right")
+                            Spacer()
+                            Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
+                        }.contentShape(Rectangle())
+                    }.buttonStyle(.plain)
                 }
                 Divider()
                 HStack{
                     ZStack { if model.running { ProgressView().controlSize(.small).accessibilityLabel("Идёт проверка") } }.frame(width:16,height:16)
                     VStack(alignment:.leading,spacing:2){
                         Text(model.running ? "Проверяем адрес…" : model.fresh.compactMap{model.rows[$0]?.Checked}.max().flatMap{ISO8601DateFormatter().date(from:$0)}.map{"Проверено в "+$0.formatted(date:.omitted,time:.shortened)} ?? "Адрес ещё не проверен").font(.caption)
-                        if model.proxy.expected.isEmpty { Text("Только наблюдение").font(.caption).foregroundStyle(.secondary) }
+                        if model.proxy.expected.isEmpty && !proxy.paused { Text("Только наблюдение").font(.caption).foregroundStyle(.secondary) }
                     }
                     Spacer()
                     Button(action:model.check){Text("Проверить адрес")}.buttonStyle(.borderedProminent).disabled(model.running || !model.online || !model.directProbeAllowed)
@@ -134,7 +157,8 @@ struct GuardPanel: View {
     func usage(_ label:String,_ host:String)->some View {
         HStack {
             Text(label);Spacer()
-            if proxyMode && !model.fresh.contains(host) {Text("Нет проверки").font(.caption).foregroundStyle(.secondary)}
+            if paused(model.selectedService) {Text("На паузе").font(.caption).foregroundStyle(.secondary)}
+            else if proxyMode && !model.fresh.contains(host) {Text("Нет проверки").font(.caption).foregroundStyle(.secondary)}
             else {status(model.displayed([host]))}
         }
     }
@@ -160,11 +184,12 @@ struct GuardPanel: View {
                     HStack {
                         Text(name).font(.body.weight(.semibold))
                         Spacer()
-                        if checkedRoutes.isEmpty {
+                        if paused(name) {Text("На паузе").font(.caption).foregroundStyle(.secondary)}
+                        else if checkedRoutes.isEmpty {
                             Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси").font(.caption).foregroundStyle(.secondary)
                         } else { status(state) }
                     }
-                    if !checkedRoutes.isEmpty, state != .clear, let finding {
+                    if !paused(name), !checkedRoutes.isEmpty, state != .clear, let finding {
                         Text(finding.verdict == .clear ? "Ждём подтверждения прокси" : finding.shortReason)
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }
@@ -200,7 +225,9 @@ private struct MainProxyCard:View {
     @ObservedObject var monitor:Monitor
     @ObservedObject var proxy:ProxyClient
     private var state:(String,Color,String) {
+        if proxy.ready && proxy.plan?.CommonPaused==true{return ("Отдельные маршруты",.secondary,"network")}
         if proxy.busy {return ("Проверяем…",.secondary,"clock")}
+        if proxy.paused {return ("На паузе",.secondary,"pause.circle")}
         if proxy.expected.isEmpty {return ("Выключен",.secondary,"circle")}
         if !proxy.ready || !monitor.online {return ("Нет соединения",.orange,"exclamationmark.circle.fill")}
         return ("Подключён",.secondary,"network")
@@ -212,7 +239,7 @@ private struct MainProxyCard:View {
                 HStack {
                     Label("Прокси",systemImage:"network").font(.headline)
                     Spacer()
-                    Text(proxy.expected.isEmpty && !proxy.busy ? "Настроить" : status.0)
+                    Text(proxy.expected.isEmpty && !proxy.paused && !proxy.busy ? "Настроить" : status.0)
                         .font(.callout).foregroundStyle(status.1)
                     Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
                 }.contentShape(Rectangle())
@@ -229,9 +256,18 @@ private struct MainProxyCard:View {
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }
                     Spacer(minLength:4)
-                    Toggle("Защита по IP",isOn:Binding(get:{ !proxy.proxyOnly },set:{ proxy.setProxyOnly(!$0) }))
+                    Toggle("Защита по IP",isOn:Binding(get:{ !proxy.proxyOnly },set:{ monitor.setProxyOnly(!$0) }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
+            } else {
+                Divider()
+                HStack {
+                    Text("Защита по IP").font(.body.weight(.medium))
+                    Spacer()
+                    Text(proxy.paused ? "На паузе" : "Неактивна").font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Блокировка по оценке IP доступна при подключённом прокси.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
             }
         }.padding(12)
          .background(Color.primary.opacity(0.055),in:RoundedRectangle(cornerRadius:12))

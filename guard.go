@@ -492,6 +492,8 @@ func main() {
 	defer stop()
 	if len(os.Args) == 2 {
 		switch os.Args[1] {
+		case "proxy-profile-check":
+			os.Exit(profileCheckCommand(ctx, os.Stdin, os.Stdout))
 		case "filter-run", "filter-on", "filter-off", "filter-refresh", "filter-pause", "filter-resume":
 			if err := filterCommand(ctx, os.Args[1]); err != nil {
 				fmt.Fprintln(os.Stderr, err)

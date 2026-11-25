@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -76,6 +77,52 @@ func TestServiceTunnelsAndLeases(t *testing.T) {
 		return c, rd
 	}
 	deadline := strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10)
+	// Exercise the same live TCP relay and authenticated profile transaction used by the app.
+	applyPause := func(paused bool) {
+		t.Helper()
+		p.CommonPaused = paused
+		raw, err := json.Marshal(p)
+		if err != nil || relay.control("config "+string(raw)) != "READY" {
+			t.Fatal("common pause transaction failed")
+		}
+	}
+	for _, mode := range []string{"mode guarded", "mode proxy-only"} {
+		relay.control(mode)
+		for _, name := range services {
+			relay.control(name + " " + deadline)
+		}
+		shared, sr := open("api.openai.com", 200, "common")
+		individual, ir := open("accounts.google.com", 200, "individual")
+		applyPause(true)
+		if _, err := sr.ReadByte(); err == nil {
+			t.Fatal("paused common stream remained open")
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			t.Fatal("paused stream timed out instead of closing")
+		}
+		shared.Close()
+		if relay.control("ChatGPT "+deadline) != "CLOSED" {
+			t.Fatal("diagnostic could open paused common route")
+		}
+		open("api.openai.com", 503, "")
+		open("claude.ai", 503, "")
+		fmt.Fprintln(individual, "survived-pause")
+		if line, err := ir.ReadString('\n'); err != nil || line != "survived-pause\n" {
+			t.Fatal("individual stream interrupted by common pause")
+		}
+		applyPause(false)
+		if mode == "mode guarded" {
+			open("api.openai.com", 503, "")
+			relay.control("ChatGPT " + deadline)
+		}
+		restored, _ := open("api.openai.com", 200, "common")
+		restored.Close()
+		fmt.Fprintln(individual, "survived-resume")
+		if line, err := ir.ReadString('\n'); err != nil || line != "survived-resume\n" {
+			t.Fatal("individual stream interrupted by common resume")
+		}
+		individual.Close()
+	}
+	relay.control("mode guarded")
 	for _, name := range services {
 		if relay.control(name+" "+deadline) != "OPEN" {
 			t.Fatal(name)
@@ -130,4 +177,19 @@ func TestServiceTunnelsAndLeases(t *testing.T) {
 	unaffected.Close()
 
 	open("drive.google.com", 403, "")
+}
+
+func TestDiagnosticsSkipPausedCommon(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // No external test connections, even on a regression.
+	p := proxyPlan{CommonPaused: true}
+	if code := collectPlan(ctx, p, func(r result) error { t.Errorf("probe emitted a result for paused %s", r.Host); return nil }); code != 0 {
+		t.Fatal(code)
+	}
+	p.Profiles = map[string]individualProxy{"Antigravity": {Endpoint: proxySpec{Scheme: "http", Host: "127.0.0.1", Port: 1}, Expected: "192.0.2.1"}}
+	var rows []string
+	collectPlan(ctx, p, func(r result) error { rows = append(rows, r.Host); return nil })
+	if len(rows) != 1 || rows[0] != googleHost {
+		t.Fatalf("expected only the active individual route, got %v", rows)
+	}
 }

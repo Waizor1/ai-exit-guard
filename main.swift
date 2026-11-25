@@ -71,7 +71,11 @@ final class Monitor: NSObject, ObservableObject {
         if service=="Antigravity" {return [googleHost]}
         return hosts.filter{Self.service($0)==service}
     }
-    var monitoredHosts:[String] {proxy.plan == nil ? Self.hosts : Self.hosts+[Self.googleHost]}
+    var monitoredHosts:[String] {
+        guard let plan=proxy.plan else{return Self.hosts}
+        let hosts=Self.hosts+[Self.googleHost]
+        return plan.CommonPaused == true ? hosts.filter{plan.Profiles[Self.service($0)] != nil} : hosts
+    }
     static let refreshInterval: TimeInterval = 120
     static let maxAge: TimeInterval = 180
     private let iso = ISO8601DateFormatter()
@@ -322,6 +326,20 @@ final class Monitor: NSObject, ObservableObject {
             }
         }
     }
+    func setProxyOnly(_ enabled:Bool) {
+        guard proxy.proxyOnly != enabled else{return}
+        var deadlines=[String:Int64]()
+        if !enabled {
+            for service in ProxyClient.services {
+                deadlines[service]=serviceDeadline(group:Self.serviceHosts(service),success:true)
+            }
+        }
+        guard proxy.setProxyOnly(enabled,deadlines:deadlines) else{return}
+        // The routing endpoints are unchanged. Keep the relay's original deadlines
+        // while checking the same endpoints again, without granting extra time.
+        invalidate("",closeAll:false)
+        if !enabled {check()}
+    }
     func serviceDeadline(group:[String],success:Bool)->Int64 {
         guard success,online,directProbeAllowed else{return 0}
         let stamps=group.compactMap { h -> Date? in
@@ -551,10 +569,13 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     }()
     private var drawnState:Recommendation?
     private var drawnProxyOnly=false
+    private var drawnPaused=false
+    private var displayedPage=""
     private var animating=false
     func draw(){
         let state=model.displayed(model.monitoredHosts)
-        let label="AI Exit Guard · "+(model.proxy.proxyOnly && model.proxy.ready ? "Только прокси" : state.title)+(model.running ? " · идёт проверка" : "")
+        let title=model.proxy.paused ? "Прокси на паузе" : (model.proxy.proxyOnly && model.proxy.ready ? "Только прокси" : state.title)
+        let label="AI Exit Guard · "+title+(model.running ? " · идёт проверка" : "")
         if let button=item.button {
             if spinner.superview == nil {
                 button.addSubview(spinner)
@@ -564,13 +585,14 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
                     spinner.widthAnchor.constraint(equalToConstant:14),spinner.heightAnchor.constraint(equalToConstant:14)])
             }
             let plain=model.proxy.proxyOnly && model.proxy.ready && model.online
-            if drawnState != state || drawnProxyOnly != plain {
-                let shield=plain ? (NSImage(systemSymbolName:"network",accessibilityDescription:"Только прокси") ?? state.trayIcon) : state.trayIcon
+            if drawnState != state || drawnProxyOnly != plain || drawnPaused != model.proxy.paused {
+                let shield=model.proxy.paused || plain ? (NSImage(systemSymbolName:model.proxy.paused ? "pause.circle" : "network",accessibilityDescription:title) ?? state.trayIcon) : state.trayIcon
                 let image=NSImage(size:NSSize(width:38,height:18),flipped:false){_ in
                     shield.draw(at:.zero,from:.zero,operation:.sourceOver,fraction:1)
                     return true
                 }
-                image.isTemplate=plain
+                image.isTemplate=plain || model.proxy.paused
+                drawnPaused=model.proxy.paused
                 button.image=image
                 drawnProxyOnly=plain
                 drawnState=state
@@ -581,7 +603,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             }
         }
         item.button?.setAccessibilityLabel(label)
-        item.button?.toolTip=[label,model.explanation(for:model.monitoredHosts)].filter{!$0.isEmpty}.joined(separator:"\n")
+        item.button?.toolTip=model.proxy.paused ? label : [label,model.explanation(for:model.monitoredHosts)].filter{!$0.isEmpty}.joined(separator:"\n")
 
     }
     func position(){
@@ -598,7 +620,12 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         if panel.frame != frame {panel.setFrame(frame,display:true)}
         let document=NSSize(width:width,height:ceil(size.height))
         if host.frame.size != document {host.setFrameSize(document)}
-        if height >= document.height && scroll.contentView.bounds.origin != .zero {
+        // Keep the current scroll position during checks. Start a newly opened
+        // page at its heading even when both pages exceed the screen height.
+        let page=model.showConnections ? "connections" : model.proxySettings ? "proxy" : model.permissions ? "settings" : (model.selectedService ?? "home")+(model.showHistory ? "/history" : model.technical ? "/detail" : "")
+        let changedPage=page != displayedPage
+        displayedPage=page
+        if (changedPage || height >= document.height) && scroll.contentView.bounds.origin != .zero {
             scroll.contentView.scroll(to:.zero)
             scroll.reflectScrolledClipView(scroll.contentView)
         }

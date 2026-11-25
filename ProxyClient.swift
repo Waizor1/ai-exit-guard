@@ -3,7 +3,7 @@ import SwiftUI
 import SystemConfiguration
 import Security
 
-struct ProxyEndpoint: Codable {
+struct ProxyEndpoint: Codable,Equatable {
     var Scheme:String, Host:String, Port:Int, User:String, Password:String
 
     init(_ line:String, scheme:String) throws {
@@ -38,10 +38,46 @@ struct IndividualProxy: Codable {
 struct ProxyPlan: Codable {
     let Common: ProxyEndpoint
     var Profiles: [String:IndividualProxy]
+    var CommonPaused:Bool?=nil
     static func load(_ data:Data)throws -> ProxyPlan {
         let decoder=JSONDecoder()
+        if let book=try? decoder.decode(ProxyLibrary.self,from:data) {
+            guard let current=book.entries.first(where:{$0.id==book.current}) else{throw ProxyIssue("Не найден выбранный профиль.")}
+            return current.plan
+        }
         if let legacy=try? decoder.decode(ProxyEndpoint.self,from:data) {return ProxyPlan(Common:legacy,Profiles:[:])}
         return try decoder.decode(ProxyPlan.self,from:data)
+    }
+}
+
+struct SavedProxy:Codable,Identifiable {
+    let id:UUID
+    var plan:ProxyPlan
+    var ip:String
+    var title:String {let ep=plan.Common;return ep.Host+":"+String(ep.Port)}
+}
+struct ProxyLibrary:Codable {
+    var entries:[SavedProxy]
+    var current:UUID?
+    mutating func select(_ plan:ProxyPlan,ip:String,id:UUID?) {
+        let index=id.flatMap{key in entries.firstIndex{$0.id==key}}
+        if let index {entries[index].plan=plan;entries[index].ip=ip;current=entries[index].id}
+        else {
+            let entry=SavedProxy(id:UUID(),plan:plan,ip:ip)
+            entries.append(entry);current=entry.id
+        }
+    }
+}
+private struct ProxyMeasurement:Decodable {
+    let IP:String,Country:String,Status:String
+    var title:String {
+        let country=Locale(identifier:"ru").localizedString(forRegionCode:Country) ?? Country
+        switch Status {
+        case "ok":return country.isEmpty ? IP : country+" · "+IP
+        case "changed":return "IP изменился · "+IP
+        case "inconsistent":return "Выходы различаются"
+        default:return "Нет ответа"
+        }
     }
 }
 
@@ -110,7 +146,15 @@ enum ProxyVault {
         if status==errSecItemNotFound {var q=query;q[kSecValueData as String]=data;q[kSecAttrAccessible as String]=kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;status=SecItemAdd(q as CFDictionary,nil)}
         guard status==errSecSuccess else {throw ProxyIssue("Связка ключей не сохранила прокси.")}
     }
-    static func read()->Data? {var q=query;q[kSecReturnData as String]=true;var value:CFTypeRef?;return SecItemCopyMatching(q as CFDictionary,&value)==errSecSuccess ? value as? Data : nil}
+    static func readForUpdate()throws -> Data? {
+        var q=query;q[kSecReturnData as String]=true
+        var item:CFTypeRef?
+        let status=SecItemCopyMatching(q as CFDictionary,&item)
+        if status==errSecItemNotFound{return nil}
+        guard status==errSecSuccess,let data=item as? Data else{throw ProxyIssue("Связка ключей недоступна. Откройте её и повторите попытку.")}
+        return data
+    }
+    static func read()->Data? {try? readForUpdate()}
     static func clear(){SecItemDelete(query as CFDictionary)}
 }
 
@@ -122,14 +166,23 @@ final class ProxyClient:ObservableObject {
     var profileChanged:((String)->Void)?
     func expectedIP(_ service:String)->String {plan?.Profiles[service]?.Expected ?? expected}
     @Published private(set) var proxyOnly=false
-    func setProxyOnly(_ enabled:Bool) {
-        guard ready, plan != nil, command(enabled ? "mode proxy-only":"mode guarded",expect:"READY") else{return}
+    func setProxyOnly(_ enabled:Bool,deadlines:[String:Int64])->Bool {
+        guard ready, plan != nil, enabled != proxyOnly else{return false}
+        var line="mode proxy-only"
+        if !enabled {
+            guard let data=try? JSONEncoder().encode(deadlines),
+                  let payload=String(data:data,encoding:.utf8) else{return false}
+            line="mode guarded "+payload
+        }
+        guard command(line,expect:"READY") else{return false}
         proxyOnly=enabled
-        leases.removeAll();allowedUntil=0
+        leases=enabled ? [:] : deadlines
+        allowedUntil=leases.values.max() ?? 0
         UserDefaults.standard.set(enabled,forKey:"proxyOnly")
-        routeChanged?()
+        return true
     }
     func isOpen(_ service:String,at now:Date=Date())->Bool {
+        if plan?.CommonPaused==true && plan?.Profiles[service]==nil{return false}
         if proxyOnly {return ready}
         guard plan != nil else{return allowsTraffic(at:now)}
         return ready && Double(leases[service] ?? 0)>now.timeIntervalSince1970
@@ -148,13 +201,78 @@ final class ProxyClient:ObservableObject {
             completion(ok)
         }
     }
+    @Published private(set) var library=ProxyLibrary(entries:[],current:nil)
+    @Published private(set) var observations=[UUID:String]()
+    @Published private(set) var measuring=false
+    private func loadLibrary()throws -> ProxyLibrary {
+        guard let raw=try ProxyVault.readForUpdate() else {
+            guard savedIP.isEmpty else{throw ProxyIssue("Не удалось прочитать сохранённый прокси.")}
+            return ProxyLibrary(entries:[],current:nil)
+        }
+        if let book=try? JSONDecoder().decode(ProxyLibrary.self,from:raw){
+            guard book.entries.contains(where:{$0.id==book.current}) else{throw ProxyIssue("Не найден выбранный профиль.")}
+            return book
+        }
+        var book=ProxyLibrary(entries:[],current:nil)
+        book.select(try ProxyPlan.load(raw),ip:savedIP,id:nil)
+        try ProxyVault.save(JSONEncoder().encode(book))
+        return book
+    }
+    func refreshLibrary(){
+        do { library=try loadLibrary() }catch{message=error.localizedDescription}
+    }
+    private func saveLibrary(_ book:ProxyLibrary)throws {
+        try ProxyVault.save(JSONEncoder().encode(book))
+        library=book
+    }
+    private func persist(_ profile:ProxyPlan,ip:String,id:UUID?)throws {
+        var book=try loadLibrary()
+        book.select(profile,ip:ip,id:id)
+        try saveLibrary(book)
+    }
+    private func measure(_ ep:ProxyEndpoint,service:String,pin:String)throws -> ProxyMeasurement {
+        struct Request:Encodable {let Endpoint:ProxyEndpoint,Service:String,Expected:String}
+        let (proc,_,out)=try start("proxy-profile-check",JSONEncoder().encode(Request(Endpoint:ep,Service:service,Expected:pin)))
+        let data=out.fileHandleForReading.readDataToEndOfFile();proc.waitUntilExit()
+        guard proc.terminationStatus==0 else{throw ProxyIssue("Прокси не ответил на проверку.")}
+        return try JSONDecoder().decode(ProxyMeasurement.self,from:data)
+    }
+    func checkLibrary(){
+        guard !measuring,!library.entries.isEmpty else{return}
+        let entries=library.entries
+        measuring=true
+        DispatchQueue.global(qos:.utility).async {
+            for entry in entries {
+                var lines=[String]()
+                if entry.plan.Profiles.isEmpty {
+                    lines.append((try? self.measure(entry.plan.Common,service:"",pin:entry.ip))?.title ?? "Нет ответа")
+                }else{
+                    for service in Self.services {
+                        let route=entry.plan.Profiles[service]
+                        if route==nil && entry.plan.CommonPaused==true {lines.append(service+" · общий на паузе");continue}
+                        let value=(try? self.measure(route?.Endpoint ?? entry.plan.Common,service:service,pin:route?.Expected ?? entry.ip))?.title ?? "Нет ответа"
+                        lines.append(service+" · "+value)
+                    }
+                }
+                let answer=lines.joined(separator:"\n")+" · "+Date().formatted(date:.omitted,time:.shortened)
+                DispatchQueue.main.async {self.observations[entry.id]=answer}
+            }
+            DispatchQueue.main.async {self.measuring=false}
+        }
+    }
+    func selectSaved(_ entry:SavedProxy){
+        do {try activate(entry.plan,pin:entry.ip,id:entry.id)}catch{message=error.localizedDescription}
+    }
+    @Published var replacing=false
     @Published var draft=""
     @Published var scheme="socks5"
     @Published private(set) var routeWarning=""
     @Published var busy=false
     @Published var ready=false
     @Published var message=""
-    @Published var expected=UserDefaults.standard.string(forKey:"proxyExpected") ?? ""
+    @Published private(set) var paused=UserDefaults.standard.bool(forKey:"proxyPaused")
+    var savedIP:String {defaults.string(forKey:"proxyExpected") ?? ""}
+    @Published var expected=UserDefaults.standard.bool(forKey:"proxyPaused") ? "" : UserDefaults.standard.string(forKey:"proxyExpected") ?? ""
     private var overlayRequested=false
     private var overlayStarting=false
     private var overlayStarted=false
@@ -260,7 +378,7 @@ final class ProxyClient:ObservableObject {
             guard ready else{throw ProxyIssue("Подключите общий прокси.")}
             let data=try JSONEncoder().encode(next)
             setServiceLease(service,0)
-            try ProxyVault.save(data)
+            try persist(next,ip:expected,id:try loadLibrary().current)
             assessmentSpec=data
             guard command("config "+String(decoding:data,as:UTF8.self),expect:"READY") else{throw ProxyIssue("Настройки сохранены. Guard восстановит подключение.")}
             assessmentSpec=data;plan=next;profileMessage="Маршрут сохранён.";profileChanged?(service)
@@ -392,23 +510,69 @@ final class ProxyClient:ObservableObject {
         catch {message=error.localizedDescription}
     }
     func connect(_ line:String,_ scheme:String) {
-        guard !busy,expected.isEmpty else{return}
-        routeWarning=""
+        do {try activate(ProxyPlan(Common:ProxyEndpoint(line,scheme:scheme),Profiles:[:]),pin:nil)}
+        catch {message=error.localizedDescription}
+    }
+    func resumeSaved(){
+        guard paused,!busy else{return}
         do {
-            let data=try JSONEncoder().encode(ProxyEndpoint(line,scheme:scheme))
-            let (p,_,out)=try start("proxy-check",data)
-            busy=true;message="Проверяем выход Claude и ChatGPT…"
+            guard let data=ProxyVault.read(),!savedIP.isEmpty else {throw ProxyIssue("Не удалось открыть сохранённый прокси в Связке ключей.")}
+            try activate(ProxyPlan.load(data),pin:savedIP,id:try loadLibrary().current)
+        }catch{message=error.localizedDescription}
+    }
+    private func activate(_ profile:ProxyPlan,pin:String?,id:UUID?=nil)throws {
+        guard !busy,(ready || expected.isEmpty) else{return}
+        routeWarning=""
+        let switching=ready
+        do {
+            let saved=try JSONEncoder().encode(profile)
+            busy=true;message="Проверяем выбранный прокси…"
             DispatchQueue.global(qos:.userInitiated).async {
-                let result=String(data:out.fileHandleForReading.readDataToEndOfFile(),encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
-                p.waitUntilExit()
+                var measured=pin ?? ""
+                do {
+                    if profile.CommonPaused != true {
+                        if profile.Profiles.isEmpty {
+                            let (p,_,out)=try self.start("proxy-check",JSONEncoder().encode(profile.Common))
+                            let value=String(data:out.fileHandleForReading.readDataToEndOfFile(),encoding:.utf8)?.trimmingCharacters(in:.whitespacesAndNewlines) ?? ""
+                            p.waitUntilExit()
+                            guard p.terminationStatus==0,!value.isEmpty else{throw ProxyIssue(value.isEmpty ? "Проверка не завершилась." : value)}
+                            measured=value
+                        } else {
+                            for service in Self.services where profile.Profiles[service]==nil {
+                                let r=try self.measure(profile.Common,service:service,pin:measured)
+                                guard r.Status=="ok",!r.IP.isEmpty else{throw ProxyIssue("Не подтверждён общий выход для "+service+".")}
+                                measured=r.IP
+                            }
+                        }
+                    }
+                    for (service,route) in profile.Profiles {
+                        guard try self.measure(route.Endpoint,service:service,pin:route.Expected).Status=="ok" else{throw ProxyIssue("Не подтверждён отдельный выход для "+service+".")}
+                    }
+                    guard !measured.isEmpty else{throw ProxyIssue("Профиль не содержит закреплённого выхода.")}
+                }catch{
+                    let reason=error.localizedDescription
+                    DispatchQueue.main.async{self.busy=false;self.message=reason}
+                    return
+                }
+                let result=measured
                 DispatchQueue.main.async {
-                    guard p.terminationStatus==0,!result.isEmpty else {self.busy=false;self.message=result.isEmpty ? "Проверка не завершилась.":result;return}
                     do {
-                        let saved=try JSONEncoder().encode(ProxyPlan.load(data))
+                        if let pin,pin != result {
+                            self.busy=false;self.message="Выходной IP изменился. Для подключения нового адреса настройте прокси заново.";return
+                        }
+                        if switching {
+                            guard self.ready else{throw ProxyIssue("Текущий прокси восстанавливается. Повторите переключение.")}
+                            try self.switchRunning(profile,data:saved,ip:result,id:id)
+                            self.busy=false;self.replacing=false;self.draft="";self.message="Прокси переключён."
+                            self.profileChanged?("Common");return
+                        }
                         if self.defaults.object(forKey:"proxyOnly") == nil {self.defaults.set(true,forKey:"proxyOnly")}
-                        try self.relay(saved);try ProxyVault.save(saved)
+                        try self.persist(profile,ip:result,id:id)
+                        self.defaults.set(result,forKey:"proxyExpected")
+                        self.paused=true;self.defaults.set(true,forKey:"proxyPaused")
+                        try self.relay(saved)
                         try SystemRoute.change(enable:true)
-                        self.expected=result;UserDefaults.standard.set(result,forKey:"proxyExpected")
+                        self.expected=result
                         let alreadyOn=DirectRouteLock.read() == .on
                         self.domainRoutes.apply(true) { ok in
                             self.busy=false
@@ -419,18 +583,59 @@ final class ProxyClient:ObservableObject {
                                 return
                             }
                             if !alreadyOn {self.defaults.set(true,forKey:"manageModelDomains")}
-                            self.draft="";self.routeWarning=""
+                            self.replacing=false;self.paused=false;self.defaults.removeObject(forKey:"proxyPaused");self.draft="";self.routeWarning=""
                             do {try self.syncFilter(connected:true)} catch {self.routeWarning=error.localizedDescription}
                             self.ready=self.server?.isRunning == true
                             self.message=self.ready ? "Прокси подключён." : "Восстанавливаем подключение…"
                             self.routeChanged?()
                         }
-                    } catch {self.busy=false;self.stop();ProxyVault.clear();self.message=error.localizedDescription}
+                    } catch {self.busy=false;if !switching {self.stop();self.plan=nil;self.expected=""};self.message=error.localizedDescription}
                 }
             }
         } catch {message=error.localizedDescription}
     }
+    private func switchRunning(_ next:ProxyPlan,data:Data,ip:String,id:UUID?)throws {
+        guard let previous=assessmentSpec,let old=plan else{throw ProxyIssue("Текущий прокси восстанавливается.")}
+        var book=try loadLibrary()
+        book.select(next,ip:ip,id:id)
+        guard command("config "+String(decoding:data,as:UTF8.self),expect:"READY") else {
+            stop();retryRelay(previous);throw ProxyIssue("Guard восстанавливает предыдущий маршрут.")
+        }
+        do {try saveLibrary(book)}
+        catch {
+            if !command("config "+String(decoding:previous,as:UTF8.self),expect:"READY"){stop();retryRelay(previous)}
+            throw error
+        }
+        for service in Self.services {
+            let before=old.Profiles[service],after=next.Profiles[service]
+            let changed = (before?.Endpoint ?? old.Common) != (after?.Endpoint ?? next.Common)
+                || (before?.Expected ?? expected) != (after?.Expected ?? ip)
+                || (before==nil && old.CommonPaused==true) != (after==nil && next.CommonPaused==true)
+            if changed {setServiceLease(service,0);leases.removeValue(forKey:service)}
+        }
+        allowedUntil=leases.values.max() ?? 0
+        plan=next;assessmentSpec=data;expected=ip;defaults.set(ip,forKey:"proxyExpected")
+    }
+    func setCommonPaused(_ value:Bool){
+        guard !busy,ready,var next=plan,!next.Profiles.isEmpty else{return}
+        next.CommonPaused=value
+        if !value {
+            do {try activate(next,pin:expected,id:try loadLibrary().current)}
+            catch {message=error.localizedDescription}
+            return
+        }
+        do {
+            let data=try JSONEncoder().encode(next)
+            try switchRunning(next,data:data,ip:expected,id:try loadLibrary().current)
+            message="Общий прокси на паузе. Отдельные маршруты подключены.";profileChanged?("Common")
+        }catch{message=error.localizedDescription}
+    }
     func disconnect(){
+        guard !busy else{return}
+        if let plan,!plan.Profiles.isEmpty {setCommonPaused(true);return}
+        disconnectAll()
+    }
+    func disconnectAll(){
         guard !busy else{return}
         if managesDomains && DirectRouteLock.read() != .off {
             busy=true
@@ -441,7 +646,7 @@ final class ProxyClient:ObservableObject {
         } else {finishDisconnect()}
     }
     private func finishDisconnect() {
-        do {try syncFilter(connected:false);try SystemRoute.change(enable:false);defaults.removeObject(forKey:"manageModelDomains");stop();plan=nil;routeWarning="";ProxyVault.clear();UserDefaults.standard.removeObject(forKey:"restoreGuardPAC");expected="";UserDefaults.standard.removeObject(forKey:"proxyExpected");message="Прокси отключён.";routeChanged?()}
+        do {try syncFilter(connected:false);try SystemRoute.change(enable:false);defaults.removeObject(forKey:"manageModelDomains");stop();plan=nil;routeWarning="";paused = !savedIP.isEmpty;defaults.set(paused,forKey:"proxyPaused");defaults.removeObject(forKey:"restoreGuardPAC");expected="";message="Прокси отключён.";routeChanged?()}
         catch {message=error.localizedDescription}
     }
     func prepareForQuit() -> Bool {
@@ -461,7 +666,32 @@ struct ProxyEditor: View {
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             Text("Прокси для ИИ").font(.title2.bold())
-            if proxy.expected.isEmpty {
+            if !proxy.library.entries.isEmpty {
+                ScrollView { VStack(alignment:.leading,spacing:8){ ForEach(proxy.library.entries) { entry in
+                    HStack {
+                        VStack(alignment:.leading) {
+                            Text(entry.title).font(.headline)
+                            Text(proxy.observations[entry.id] ?? (proxy.measuring ? "Проверяем выход…" : "Выход ещё не проверен")).font(.caption)
+                        }
+                        Spacer()
+                        if proxy.ready && proxy.library.current==entry.id {Text(proxy.plan?.CommonPaused==true ? "Общий на паузе":"Подключён").foregroundStyle(.green)}
+                        else { Button("Подключить"){proxy.selectSaved(entry)}.disabled(proxy.busy) }
+                    }
+                }
+                }}.frame(maxHeight:160)
+                HStack {
+                    Button(proxy.measuring ? "Проверяем…" : "Проверить выходы"){proxy.checkLibrary()}.disabled(proxy.measuring)
+                    if !proxy.replacing {Button("Добавить"){proxy.replacing=true}}
+                }
+            }
+            if proxy.paused && !proxy.replacing && proxy.library.entries.isEmpty {
+                Text("Сохранённый выход   "+proxy.savedIP)
+                HStack {
+                    Button("Подключить снова",action:proxy.resumeSaved).buttonStyle(.borderedProminent)
+                    Button("Другой прокси"){proxy.replacing=true}
+                }.disabled(proxy.busy)
+            } else if proxy.replacing || (proxy.expected.isEmpty && proxy.library.entries.isEmpty) {
+                if proxy.paused || proxy.ready {Button("Назад"){proxy.replacing=false}}
                 Text("Вставьте строку из кабинета провайдера. Guard проверит, что Claude и ChatGPT видят один IP.").font(.callout)
                 Picker("Протокол",selection:$proxy.scheme) {
                     Text("HTTP").tag("http");Text("HTTPS").tag("https");Text("SOCKS5").tag("socks5")
@@ -473,13 +703,16 @@ struct ProxyEditor: View {
                     Button("Подключить"){proxy.connect(proxy.draft,proxy.scheme)}.buttonStyle(.borderedProminent).disabled(proxy.draft.isEmpty || proxy.busy)
                 }.disabled(proxy.busy)
                 Text("macOS запросит разрешение на настройку сети. Пароль хранится в Связке ключей.").font(.caption).foregroundStyle(.secondary)
-            } else {
+            } else if proxy.ready {
                 Text("Выбранный выход   "+proxy.expected).textSelection(.enabled)
-                Button("Отключить прокси",action:proxy.disconnect)
+                if let plan=proxy.plan,!plan.Profiles.isEmpty {
+                    Button(plan.CommonPaused==true ? "Подключить общий":"Отключить общий"){proxy.setCommonPaused(plan.CommonPaused != true)}.disabled(proxy.busy)
+                    Button("Отключить все прокси"){proxy.replacing=false;proxy.disconnectAll()}.disabled(proxy.busy)
+                }else{Button("Отключить прокси"){proxy.replacing=false;proxy.disconnect()}.disabled(proxy.busy)}
             }
             if !proxy.routeWarning.isEmpty {Text(proxy.routeWarning).font(.callout).foregroundStyle(.orange)}
             if proxy.busy {ProgressView().controlSize(.small)}
             if !proxy.message.isEmpty {Text(proxy.message).font(.callout).fixedSize(horizontal:false,vertical:true)}
-        }
+        }.onAppear{proxy.refreshLibrary();proxy.checkLibrary()}
     }
 }

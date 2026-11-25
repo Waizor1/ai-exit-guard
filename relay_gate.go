@@ -43,7 +43,7 @@ func (g *relayGate) set(until time.Time) bool {
 		g.closeLocked()
 		return false
 	}
-	if g.window != nil && !now.Before(g.expiry) {
+	if g.window != nil && !g.expiry.IsZero() && !now.Before(g.expiry) {
 		g.closeLocked()
 	}
 	if g.window == nil {
