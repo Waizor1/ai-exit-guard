@@ -123,7 +123,7 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		// Some checks emit an initial measurement before reputation is available.
 		// A changed exit or a red reading must revoke the *previous* lease now.
 		reason := c.refusal(r, countries, time.Now())
-		if reason != "" && !c.temporaryReading(r, service, countries, time.Now()) {
+		if !c.ProxyOnly && reason != "" && !c.temporaryReading(r, service, countries, time.Now()) {
 			relay.control(service + " 0")
 			closed := desktopRoute{Reason: reason}
 			if state[service] != closed {
@@ -165,13 +165,18 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 				until = end
 			}
 		}
-		if temporary && state[service].Until > now.Unix() {
+		if !c.ProxyOnly && temporary && state[service].Until > now.Unix() {
 			// An explicit change was already revoked in the callback above.
 			// The timer in relayGate independently enforces the original deadline.
 			continue
 		}
 		state[service] = desktopRoute{Reason: reason}
-		if relay.control(fmt.Sprintf("%s %d", service, until.Unix())) == "OPEN" {
+		if c.ProxyOnly {
+			// In advisory mode a measurement must never alter the live tunnel.
+			if reason == "" {
+				state[service] = desktopRoute{Until: until.Unix()}
+			}
+		} else if relay.control(fmt.Sprintf("%s %d", service, until.Unix())) == "OPEN" {
 			state[service] = desktopRoute{Until: until.Unix()}
 		}
 	}
@@ -211,25 +216,43 @@ func desktopRelay(parent context.Context, input io.Reader, output io.Writer) int
 	srv := &http.Server{Handler: relay, ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 32768}
 	go func() { defer cancel(); _ = srv.Serve(ln) }()
 	defer srv.Close()
+	check := make(chan struct{}, 1)
 	go func() {
 		for sc.Scan() {
+			if sc.Text() == "check" {
+				select {
+				case check <- struct{}{}:
+				default:
+				}
+			}
 		}
 		cancel()
 	}()
 	if c.ProxyOnly {
 		relay.control("mode proxy-only")
-		fmt.Fprintln(output, "READY")
-		<-ctx.Done()
-		return 0
 	}
 	fmt.Fprintln(output, "READY")
 	state := map[string]desktopRoute{}
 	for ctx.Err() == nil {
+		manual := false
+		if c.ProxyOnly {
+			select {
+			case <-ctx.Done():
+				return 0
+			case <-check:
+				manual = true
+			}
+		}
 		nextCheck := time.Now().Add(90 * time.Second)
 		refreshDesktop(ctx, c, relay, countries, state, output)
+		if manual {
+			fmt.Fprintln(output, "CHECKED")
+			continue
+		}
 		select {
 		case <-ctx.Done():
 		case <-time.After(max(5*time.Second, time.Until(nextCheck))):
+		case <-check:
 		}
 	}
 	return 0

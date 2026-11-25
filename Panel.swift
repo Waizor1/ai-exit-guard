@@ -116,21 +116,7 @@ struct GuardPanel: View {
                     }.padding(.horizontal,10)
                 }
                 if model.selectedService == nil {
-                    VStack(spacing:8) {
-                        MainProxyCard(monitor:model,proxy:model.proxy)
-                        if !model.proxy.routeWarning.isEmpty {
-                            Text(model.proxy.routeWarning).font(.callout).foregroundStyle(.orange)
-                        }
-                        if model.proxy.ready {
-                            HStack {
-                                Label("Килл-свитч",systemImage:"shield").font(.headline)
-                                Spacer()
-                                Text(proxyMode ? "Выключен" : "Включён").font(.caption).foregroundStyle(.secondary)
-                                Toggle("Килл-свитч",isOn:Binding(get:{!model.proxy.proxyOnly},set:{model.proxy.setProxyOnly(!$0)}))
-                                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            }.padding(12).background(Color.primary.opacity(0.055),in:RoundedRectangle(cornerRadius:12))
-                        }
-                    }
+                    MainProxyCard(monitor:model,proxy:model.proxy)
                 }
                 Divider()
                 HStack{
@@ -153,20 +139,38 @@ struct GuardPanel: View {
         }
     }
     func status(_ state:Recommendation)->some View {
-        Label(state == .clear ? "Низкий риск" : state == .avoid ? "Не входить" : "Повремените",systemImage:state.symbol)
+        let label: String
+        switch state {
+        case .clear: label = "Низкий риск"
+        case .caution: label = proxyMode ? "Есть замечание" : "Повремените"
+        case .avoid: label = proxyMode ? "Высокий риск" : "Не входить"
+        }
+        return Label(label,systemImage:state.symbol)
             .font(.caption.weight(.semibold)).foregroundStyle(Color(nsColor:state.color))
     }
     func serviceRow(_ name:String,_ symbol:String,_ tint:Color)->some View {
-        let state=model.displayed(hosts(name))
-        return Button{model.selectedService=name;model.technical=false} label:{
-            HStack(spacing:9){
+        let routes = hosts(name)
+        let checkedRoutes = proxyMode ? routes.filter { model.fresh.contains($0) } : routes
+        let state = model.displayed(routes)
+        let finding = routes.map { model.displayedFinding($0) }.max { $0.rawValue < $1.rawValue }
+        return Button { model.selectedService=name; model.technical=false } label: {
+            HStack(alignment:.firstTextBaseline,spacing:9) {
                 Image(systemName:symbol).foregroundStyle(tint).frame(width:24)
-                Text(name).font(.body.weight(.semibold));Spacer()
-                if proxyMode && model.fresh.isDisjoint(with:hosts(name)) {
-                    Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси").font(.caption).foregroundStyle(.secondary)
-                } else {status(state)}
+                VStack(alignment:.leading,spacing:4) {
+                    HStack {
+                        Text(name).font(.body.weight(.semibold))
+                        Spacer()
+                        if checkedRoutes.isEmpty {
+                            Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси").font(.caption).foregroundStyle(.secondary)
+                        } else { status(state) }
+                    }
+                    if !checkedRoutes.isEmpty, state != .clear, let finding {
+                        Text(finding.verdict == .clear ? "Ждём подтверждения прокси" : finding.shortReason)
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    }
+                }
                 Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
-            }.padding(.vertical,10).contentShape(Rectangle())
+            }.padding(.vertical,9).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityElement(children:.combine)
     }
     func setting(_ icon:String,_ title:String,_ status:String,_ action:String,_ f:@escaping()->Void)->some View{
@@ -199,20 +203,39 @@ private struct MainProxyCard:View {
         if proxy.busy {return ("Проверяем…",.secondary,"clock")}
         if proxy.expected.isEmpty {return ("Выключен",.secondary,"circle")}
         if !proxy.ready || !monitor.online {return ("Нет соединения",.orange,"exclamationmark.circle.fill")}
-        return (proxy.expected,.secondary,"arrow.up.right")
+        return ("Подключён",.secondary,"network")
     }
     var body:some View {
         let status=state
-        Button {monitor.proxySettings=true} label: {
-            HStack {
-                Label("Прокси",systemImage:"network").font(.headline)
-                Spacer()
-                Label(proxy.expected.isEmpty && !proxy.busy ? "Настроить" : status.0,systemImage:status.2)
-                    .font(.caption.weight(.semibold)).foregroundStyle(status.1)
-                Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
-            }.contentShape(Rectangle())
-        }.buttonStyle(.plain).padding(12)
+        VStack(alignment:.leading,spacing:10) {
+            Button { monitor.proxySettings=true } label: {
+                HStack {
+                    Label("Прокси",systemImage:"network").font(.headline)
+                    Spacer()
+                    Text(proxy.expected.isEmpty && !proxy.busy ? "Настроить" : status.0)
+                        .font(.callout).foregroundStyle(status.1)
+                    Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if !proxy.routeWarning.isEmpty {
+                Text(proxy.routeWarning).font(.caption).foregroundStyle(.orange)
+            }
+            if proxy.ready {
+                Divider()
+                HStack(spacing:12) {
+                    VStack(alignment:.leading,spacing:3) {
+                        Text("Защита по IP").font(.body.weight(.medium))
+                        Text(proxy.proxyOnly ? "Guard только предупреждает о риске." : "При опасном IP Guard блокирует запросы к ИИ через прокси.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    }
+                    Spacer(minLength:4)
+                    Toggle("Защита по IP",isOn:Binding(get:{ !proxy.proxyOnly },set:{ proxy.setProxyOnly(!$0) }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+            }
+        }.padding(12)
          .background(Color.primary.opacity(0.055),in:RoundedRectangle(cornerRadius:12))
+
     }
 }
 

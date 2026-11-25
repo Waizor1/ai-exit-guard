@@ -76,6 +76,32 @@ enum Finding: Int {
         default: return false
         }
     }
+    var shortReason: String {
+        switch self {
+        case .clear: return "Адрес проверен"
+        case .rechecking: return "Идёт повторная проверка"
+        case .reputationOnly: return "IP123 проверил другой адрес"
+        case .waiting: return "Проверяем адрес…"
+        case .incomplete: return "Свежей проверки пока нет"
+        case .changingIP: return "Адрес выхода изменился"
+        case .regionUncertain: return "В стране есть региональные ограничения"
+        case .policyExpired: return "Список доступных стран устарел"
+        case .trustUnavailable: return "IP123 не подтвердил доверие к адресу"
+        case .infoUnavailable: return "IPinfo не подтвердил сведения об адресе"
+        case .riskUnavailable: return "Оценка риска пока недоступна"
+        case .regionUnknown: return "Страна выхода неизвестна"
+        case .regionConflict: return "Проверки показали разные страны"
+        case .domainUnavailable: return "Сервис не ответил на проверку"
+        case .moderateIP: return "У адреса средний риск по IP123"
+        case .moderateAI: return "IP123 отмечает умеренный риск для ИИ"
+        case .frequentSwitch: return "Адрес часто менялся за 15 минут"
+        case .riskyIP: return "У адреса высокий риск по IP123"
+        case .riskyAI: return "IP123 отметил риск для этого сервиса"
+        case .unsupportedCountry: return "Сервис недоступен в стране выхода"
+        case .differentExit: return "Адрес выхода отличается от выбранного"
+        }
+    }
+
     var explanation: String {
         switch self {
         case .clear: return "Можно входить. Страна поддерживается, у адреса хорошая репутация."
