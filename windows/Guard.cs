@@ -214,7 +214,7 @@ sealed class GuardWindow : Form {
         actions.Controls.Add(checkAddress);actions.Controls.Add(start);home.Controls.Add(actions);
         settings.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0));
         settings.Controls.Add(Copy("Общий прокси",true));ProxyInputs(settings,0);
-        settings.Controls.Add(ActionButton("Подключить",(s,e)=>{if(relay==null){pages.SelectedIndex=0;Connect();}else pages.SelectedIndex=0;else MessageBox.Show(status.Text,Text);}));
+        settings.Controls.Add(ActionButton("Подключить",(s,e)=>{pages.SelectedIndex=0;if(relay==null)Connect();}));
         routeOptions=ActionButton("Отдельные прокси  ▸",(sender,e)=>ShowRouteOptions(!optionalRoutes.Visible));
         settings.Controls.Add(routeOptions);
         optionalRoutes=Card();settings.Controls.Add(optionalRoutes);
