@@ -18,7 +18,10 @@ sealed class GuardWindow : Form {
         public bool ProxyOnly {get;set;}
     }
     readonly string[] names = {"Общий", "Claude", "ChatGPT", "Antigravity"};
-    readonly TextBox[] urls = new TextBox[4], ips = new TextBox[4];
+    readonly TextBox[] urls = new TextBox[4];
+    readonly ComboBox[] schemes = new ComboBox[4];
+    readonly Button[] paste = new Button[4];
+    readonly string[] pins = new string[4];
     readonly Label status = new Label { AutoSize=true };
     readonly Label[] outcomes = new Label[3];
     readonly CheckBox allowMismatch = new CheckBox { Dock=DockStyle.Fill,AutoSize=true, Text="Разрешить разные страны Google и IPinfo для Antigravity" };
@@ -70,11 +73,39 @@ sealed class GuardWindow : Form {
     }
     void ProxyInputs(TableLayoutPanel grid,int i) {
         var fields=new TableLayoutPanel {AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2};
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
-        fields.Controls.Add(Copy("Адрес прокси",false),0,0);fields.Controls.Add(Copy("IP · авто",false),1,0);
-        urls[i]=new TextBox{AccessibleName=names[i]+" — прокси",Dock=DockStyle.Fill,UseSystemPasswordChar=true};
-        ips[i]=new TextBox{AccessibleName=names[i]+" — выходной IP",Dock=DockStyle.Fill};
-        fields.Controls.Add(urls[i],0,1);fields.Controls.Add(ips[i],1,1);
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        fields.Controls.Add(Copy("Протокол",false),0,0);
+        schemes[i]=new ComboBox{AccessibleName=names[i]+" — протокол",DropDownStyle=ComboBoxStyle.DropDownList,Dock=DockStyle.Fill};
+        schemes[i].Items.AddRange(new object[]{"HTTP","HTTPS","SOCKS5"});
+        schemes[i].SelectedIndex=0;
+        fields.Controls.Add(schemes[i],0,1);
+        var hint=Copy("Строка прокси · логин:пароль@адрес:порт",false);
+        fields.Controls.Add(hint,0,2);fields.SetColumnSpan(hint,2);
+        urls[i]=new TextBox{AccessibleName=names[i]+" — строка прокси",Anchor=AnchorStyles.Left|AnchorStyles.Right,UseSystemPasswordChar=true};
+        fields.Controls.Add(urls[i],0,3);
+        paste[i]=ActionButton("Вставить",(sender,e)=>{
+            try{
+                string line=Clipboard.GetText().Trim();
+                if(line.Length>0)urls[i].Text=line;
+                urls[i].Focus();
+            }catch(System.Runtime.InteropServices.ExternalException){MessageBox.Show(this,"Буфер обмена занят. Попробуйте ещё раз.");}
+        });
+        paste[i].AccessibleName="Вставить прокси — "+names[i];
+        fields.Controls.Add(paste[i],1,3);
+        schemes[i].SelectedIndexChanged+=(sender,e)=>pins[i]=null;
+        urls[i].TextChanged+=(sender,e)=>{
+            pins[i]=null;
+            string raw=urls[i].Text.Trim();
+            int separator=raw.IndexOf("://",StringComparison.Ordinal);
+            if(separator<1)return;
+            string scheme=raw.Substring(0,separator).ToUpperInvariant();
+            if(scheme=="SOCKS5H")scheme="SOCKS5";
+            if(!schemes[i].Items.Contains(scheme))return;
+            schemes[i].SelectedItem=scheme;
+            urls[i].Text=raw.Substring(separator+3);
+            urls[i].SelectionStart=urls[i].TextLength;
+        };
         grid.Controls.Add(fields);
     }
     void ShowIdle(string message) {
@@ -183,7 +214,7 @@ sealed class GuardWindow : Form {
         actions.Controls.Add(checkAddress);actions.Controls.Add(start);home.Controls.Add(actions);
         settings.Controls.Add(ActionButton("←  Назад",(s,e)=>pages.SelectedIndex=0));
         settings.Controls.Add(Copy("Общий прокси",true));ProxyInputs(settings,0);
-        settings.Controls.Add(ActionButton("Подключить",(s,e)=>{if(relay==null)Connect();if(relay!=null || checkingProxy)pages.SelectedIndex=0;else MessageBox.Show(status.Text,Text);}));
+        settings.Controls.Add(ActionButton("Подключить",(s,e)=>{if(relay==null){pages.SelectedIndex=0;Connect();}else pages.SelectedIndex=0;else MessageBox.Show(status.Text,Text);}));
         routeOptions=ActionButton("Отдельные прокси  ▸",(sender,e)=>ShowRouteOptions(!optionalRoutes.Visible));
         settings.Controls.Add(routeOptions);
         optionalRoutes=Card();settings.Controls.Add(optionalRoutes);
@@ -207,7 +238,7 @@ sealed class GuardWindow : Form {
                 byte[] bytes=ProtectedData.Unprotect(File.ReadAllBytes(saved),null,DataProtectionScope.CurrentUser);
                 var r=json.Deserialize<Route[]>(Encoding.UTF8.GetString(bytes));
                 if(r.Length!=4)throw new InvalidDataException();
-                for(int i=0;i<4;i++){urls[i].Text=r[i].Address;ips[i].Text=r[i].IP;}
+                for(int i=0;i<4;i++){urls[i].Text=r[i].Address;pins[i]=r[i].IP;}
                 allowMismatch.Checked=r[0].AllowGoogleCountryMismatch;protection.Checked=!r[0].ProxyOnly;
                 if(!File.Exists(Path.Combine(dataDirectory,"paused")))Shown+=(s,e)=>Connect();
             }catch{State("Не удалось прочитать сохранённые прокси.",false);}
@@ -241,7 +272,16 @@ sealed class GuardWindow : Form {
     }
     object Endpoint(string text) {
         Uri u;
-        if(!text.Contains("://"))text="http://"+text;
+        int split=text.IndexOf("://",StringComparison.Ordinal);
+        if(split<1)throw new FormatException();
+        string body=text.Substring(split+3);
+        if(body.Contains("://"))throw new FormatException();
+        if(!body.Contains("@") && !body.StartsWith("[")){
+            var parts=body.Split(new[]{':'},4);
+            int port;
+            if(parts.Length==4 && int.TryParse(parts[1],out port) && port>=1 && port<=65535)
+                text=text.Substring(0,split+3)+Uri.EscapeDataString(parts[2])+":"+Uri.EscapeDataString(parts[3])+"@"+parts[0]+":"+parts[1];
+        }
         if(!Uri.TryCreate(text,UriKind.Absolute,out u) || (u.Scheme!="http" && u.Scheme!="https" && u.Scheme!="socks5") || u.Port<1 || u.AbsolutePath.Trim('/').Length>0 || u.Query!="" || u.Fragment!="") throw new FormatException();
         string[] auth=u.UserInfo.Split(new[]{':'},2);
         return new {Scheme=u.Scheme, Host=u.DnsSafeHost, Port=u.Port, User=Uri.UnescapeDataString(auth[0]),Password=auth.Length>1?Uri.UnescapeDataString(auth[1]):""};
@@ -267,13 +307,13 @@ sealed class GuardWindow : Form {
         try {
             var profiles=new Dictionary<string,object>();var routes=new List<Route>();object common=null;
             for(int i=0;i<4;i++) {
-                string url=urls[i].Text.Trim(), ip=ips[i].Text.Trim();
-                var route=new Route{Address=url,IP=ip,ProxyOnly=i==0 && ProxyOnly,AllowGoogleCountryMismatch=i==0 && allowMismatch.Checked};
+                string url=urls[i].Text.Trim(), ip=pins[i] ?? "";
+                var route=new Route{Address=url==""?"":schemes[i].Text.ToLowerInvariant()+"://"+url,IP=ip,ProxyOnly=i==0 && ProxyOnly,AllowGoogleCountryMismatch=i==0 && allowMismatch.Checked};
                 routes.Add(route);
                 if(url=="" && ip=="" && i>0)continue;
                 System.Net.IPAddress parsed;
                 if(url=="" || (ip!="" && (!System.Net.IPAddress.TryParse(ip,out parsed) || parsed.ToString()!=ip)))throw new FormatException();
-                var endpoint=Endpoint(url);
+                var endpoint=Endpoint(route.Address);
                 if(ip==""){
                     State("Проверяем выход через прокси…",false);
                     try{ip=await MeasureExit(endpoint,i);}catch{
@@ -281,7 +321,7 @@ sealed class GuardWindow : Form {
                         return;
                     }
                     if(IsDisposed || Disposing)return;
-                    route.IP=ip;ips[i].Text=ip;
+                    route.IP=ip;pins[i]=ip;
                 }
                 if(i==0)common=endpoint;else profiles[names[i]]=new {Endpoint=endpoint,Expected=ip};
             }
@@ -295,14 +335,14 @@ sealed class GuardWindow : Form {
             try{File.WriteAllBytes(temp,data);if(File.Exists(saved))File.Replace(temp,saved,null);else File.Move(temp,saved);}
             finally{if(File.Exists(temp))File.Delete(temp);}
             ShowIdle("Подключаем…");Inputs(false);start.Text="Отключить прокси";State(ProxyOnly?"Запускаем прокси…":"Проверяем адреса перед подключением.",false);
-        }catch(FormatException){State("Введите прокси и его фактический выходной IP.",false);}
+        }catch(FormatException){State("Проверьте строку прокси. Пример: логин:пароль@адрес:порт.",false);}
          catch{Stop();State("Не удалось запустить Guard или сохранить настройки.",false);}
         finally{
             checkingProxy=false;
             if(!IsDisposed && !Disposing){start.Enabled=true;Inputs(relay==null);}
         }
     }
-    void Inputs(bool enabled){protection.Enabled=enabled || relayReady;allowMismatch.Enabled=enabled;foreach(var t in urls)t.Enabled=enabled;foreach(var t in ips)t.Enabled=enabled;}
+    void Inputs(bool enabled){protection.Enabled=enabled || relayReady;allowMismatch.Enabled=enabled;foreach(var t in urls)t.Enabled=enabled;foreach(var t in schemes)t.Enabled=enabled;foreach(var t in paste)t.Enabled=enabled;}
     bool DomainRulesPresent(){
         try{return DomainLock.Enabled();}catch{return false;}
     }
@@ -416,7 +456,7 @@ sealed class GuardWindow : Form {
         protection.Checked=true;
         string original="127.0.0.1 localhost\r\n";string on=DomainLock.Edit(original,true);
         if(DomainLock.Edit(on,false)!=original || DomainLock.Edit(on,true)!=on || !on.Contains("127.0.0.2 daily-cloudcode-pa.googleapis.com"))return 18;
-        if(!Visible || !IsHandleCreated || !tray.Visible || urls.Length!=4 || ips.Length!=4)return 11;
+        if(!Visible || !IsHandleCreated || !tray.Visible || urls.Length!=4 || schemes.Length!=4)return 11;
         var initialSize=ClientSize;
         foreach(int width in new[]{650,460}){
             ClientSize=new Size(width,570);PerformLayout();pages.SelectedIndex=0;pages.SelectedTab.PerformLayout();
@@ -429,17 +469,25 @@ sealed class GuardWindow : Form {
         pages.SelectedIndex=1;ShowRouteOptions(true);
         for(int i=0;i<4;i++){
             pages.Update();
-            if(!urls[i].Created || !ips[i].Created || ips[i].Width<60 || urls[i].Width<80)return 12;
+            if(!urls[i].Created || !paste[i].Created || !schemes[i].Created || paste[i].Width<60 || urls[i].Width<80)return 12;
         }
+        Clipboard.SetText("socks5://demo:pass@proxy.example:8000");paste[1].PerformClick();
+        if(schemes[1].Text!="SOCKS5" || urls[1].Text!="demo:pass@proxy.example:8000")return 24;
+        if(json.Serialize(Endpoint("https://proxy.example:8000:demo:p:a"))!=json.Serialize(Endpoint("https://demo:p%3Aa@proxy.example:8000")))return 25;
+        pins[1]="192.0.2.1";schemes[1].SelectedItem="HTTPS";
+        if(pins[1]!=null)return 26;
+        urls[1].Text="";
+        pages.SelectedIndex=1;ShowRouteOptions(false);
+        pages.SelectedTab.PerformLayout();SaveSmokeImage("03-settings.png");
         pages.SelectedIndex=0;
         leases=json.Deserialize<Dictionary<string,Reading>>("{\"Antigravity\":{\"Until\":0,\"Reason\":\"Google: NL, IPinfo: DE\"},\"Claude\":{\"Until\":201}}");
         RenderReadings(200);
         if(!outcomes[2].AccessibleDescription.Contains("Google: NL, IPinfo: DE") || !outcomes[0].Text.Contains("Можно") || !outcomes[1].Text.Contains("Проверяем"))return 19;
         RenderReadings(201);if(!outcomes[0].Text.Contains("Закрыт"))return 20;
         allowMismatch.Checked=true;
-        urls[0].Text="http://127.0.0.1:1";ips[0].Text="invalid";start.PerformClick();
-        if(relay!=null || !status.Text.Contains("IP"))return 13;
-        ips[0].Text="192.0.2.1"; start.PerformClick();
+        urls[0].Text="http://example.org:invalid";start.PerformClick();
+        if(relay!=null || !status.Text.Contains("строку прокси"))return 13;
+        urls[0].Text="http://127.0.0.1:1";pins[0]="192.0.2.1"; start.PerformClick();
         if(relay==null || relay.HasExited || !File.Exists(saved) || urls[0].Enabled)return 14;
         byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(saved),null,DataProtectionScope.CurrentUser);
         if(!json.Deserialize<Route[]>(Encoding.UTF8.GetString(plain))[0].AllowGoogleCountryMismatch)return 15;
@@ -453,7 +501,6 @@ sealed class GuardWindow : Form {
         relayReady=false;protection.Checked=false;relayReady=true;RenderReadings(200);
         if(outcomes[2].Text!="Есть замечание" || !checkAddress.Visible || !reasons[2].Visible)return 23;
         SaveSmokeImage("04-proxy-only-warning.png");
-        pages.SelectedIndex=1;ShowRouteOptions(false);pages.SelectedTab.PerformLayout();SaveSmokeImage("03-settings.png");
         pages.SelectedIndex=0;
         start.PerformClick();if(relay!=null || !urls[0].Enabled)return 16;
         return 0;
