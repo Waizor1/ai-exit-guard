@@ -41,6 +41,7 @@ jobs:
           path: dist/AI-Exit-Guard-Windows-x64.zip
       - if: runner.os == 'macOS'
         run: |
+          python3 tests/check_mcp_dns_worker.py
           python3 packaging/helper/test_dns_lease.py
           python3 packaging/helper/test_dns_native.py
           python3 tests/check_t3_launcher.py

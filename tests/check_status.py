@@ -88,6 +88,21 @@ extension ProxyClient {
     entry = (ROOT / 'main.swift').read_text().split('let app=NSApplication.shared')[0]
     driver = pathlib.Path(stage) / 'main.swift'
     driver.write_text(entry + r"""
+var fields=ProxyInput()
+precondition(fields.scheme=="http")
+try! fields.importLine("https://al%40ice:p%3A%3F%23%25%2F%40@[2001:db8::1]:8443")
+precondition(fields.scheme=="https" && fields.address=="[2001:db8::1]:8443" && fields.username=="al@ice" && fields.password=="p:?#%/@")
+fields.username="al:ice@/#?%"
+fields.password="p@:/?#% å"
+fields.scheme="socks5"
+let assembled=try! ProxyEndpoint(fields.connectionLine(),scheme:"http")
+precondition(assembled.Scheme=="socks5" && assembled.User==fields.username && assembled.Password==fields.password && assembled.Host=="2001:db8::1")
+try! fields.importLine("socks5h://proxy.example.test:1080")
+precondition(fields.scheme=="socks5" && fields.password.isEmpty)
+var freshInput=ProxyInput()
+try! freshInput.importLine("proxy.example.test:8000")
+precondition(freshInput.scheme=="http")
+print("PASS shared fields default, explicit scheme, IPv6, saved credentials and reserved characters")
 let parsed=try! ProxyEndpoint("demo:p%40ss@127.0.0.1:8080",scheme:"http")
 precondition(parsed.Password=="p@ss" && parsed.Host=="127.0.0.1")
 let alternate=try! ProxyEndpoint("127.0.0.1:1080:demo:local",scheme:"socks5")
