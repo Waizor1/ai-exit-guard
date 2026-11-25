@@ -83,7 +83,32 @@ sealed class GuardWindow : Form {
             ShowReason(i,"");
         }
     }
-    readonly CheckBox protection=new CheckBox{AutoSize=true,Text="Защита по IP",AccessibleName="Защита по IP"};
+    // Keep the native CheckBox semantics for keyboard and screen readers.
+    sealed class ModeSwitch : CheckBox {
+        public ModeSwitch(){
+            Text="Защита по IP";AccessibleName=Text;Dock=DockStyle.Fill;
+            AutoSize=false;Height=32;Margin=new Padding(4,3,4,0);Cursor=Cursors.Hand;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw,true);
+        }
+        protected override void OnPaint(PaintEventArgs e){
+            e.Graphics.Clear(BackColor);
+            int h=Math.Max(16,Font.Height),w=2*h;
+            var track=new Rectangle(Width-w-2,(Height-h)/2,w,h);
+            Color trackColor=Checked?Color.FromArgb(55,119,217):Color.FromArgb(95,98,104);
+            e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            using(var path=new GraphicsPath()){
+                path.AddArc(track.Left,track.Top,h,h,90,180);
+                path.AddArc(track.Right-h,track.Top,h,h,270,180);path.CloseFigure();
+                using(var brush=new SolidBrush(trackColor))e.Graphics.FillPath(brush,path);
+            }
+            int thumb=h-4;
+            e.Graphics.FillEllipse(Brushes.White,Checked?track.Right-thumb-2:track.Left+2,track.Top+2,thumb,thumb);
+            var label=new Rectangle(0,0,Math.Max(0,track.Left-8),Height);
+            TextRenderer.DrawText(e.Graphics,Text,Font,label,ForeColor,TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+            if(Focused && ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,ClientRectangle,ForeColor,BackColor);
+        }
+    }
+    readonly ModeSwitch protection=new ModeSwitch();
     bool ProxyOnly {get{return !protection.Checked;}}
     readonly Button dns=new Button();
     readonly bool smokeMode;
@@ -135,7 +160,7 @@ sealed class GuardWindow : Form {
         var edit=ActionButton("Прокси", (sender,e)=>pages.SelectedIndex=1);edit.TextAlign=ContentAlignment.MiddleLeft;
         proxyCard.Controls.Add(edit,0,0);proxyBadge.ForeColor=muted;proxyBadge.Anchor=AnchorStyles.Right;
         proxyCard.Controls.Add(proxyBadge,1,0);
-        protection.Margin=new Padding(4,8,2,2);proxyCard.Controls.Add(protection,0,1);proxyCard.SetColumnSpan(protection,2);
+        protection.ForeColor=ink;protection.BackColor=card;protection.Font=new Font(Font,FontStyle.Bold);proxyCard.Controls.Add(protection,0,1);proxyCard.SetColumnSpan(protection,2);
         modeHint.ForeColor=muted;modeHint.Margin=new Padding(4,1,2,6);
         proxyCard.Controls.Add(modeHint,0,2);proxyCard.SetColumnSpan(modeHint,2);home.Controls.Add(proxyCard);
         protection.CheckedChanged+=(sender,e)=>{
@@ -148,7 +173,7 @@ sealed class GuardWindow : Form {
         start.Click+=(s,e)=>{if(relay!=null || retrying) Disconnect();else if(String.IsNullOrWhiteSpace(urls[0].Text)){pages.SelectedIndex=1;urls[0].Focus();}else Connect();};
         var actions=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft,WrapContents=true};
         checkAddress.Text="Проверить адрес";checkAddress.AutoSize=true;checkAddress.FlatStyle=FlatStyle.Flat;
-        checkAddress.BackColor=card;checkAddress.ForeColor=ink;checkAddress.FlatAppearance.BorderSize=0;checkAddress.Padding=new Padding(8,4,8,4);
+        checkAddress.BackColor=accent;checkAddress.ForeColor=ink;checkAddress.FlatAppearance.BorderSize=0;checkAddress.Padding=new Padding(8,4,8,4);
         checkAddress.Margin=new Padding(6,8,0,4);checkAddress.Visible=false;
         checkAddress.Click+=(sender,e)=>{
             if(!relayReady || !ProxyOnly || !checkAddress.Enabled)return;
@@ -211,7 +236,7 @@ sealed class GuardWindow : Form {
         if(relay==null)verdict.ForeColor=ink;
         bool routing=ProxyOnly && relayReady;
         if(routing){verdict.Text="Только прокси";verdict.ForeColor=ink;summary.BackColor=card;}
-        checkAddress.Visible=routing;
+        checkAddress.Visible=routing;start.BackColor=routing?card:accent;
         tray.Text="Guard · "+verdict.Text;tray.Icon=routing?SystemIcons.Shield:open?SystemIcons.Information:closed?SystemIcons.Error:SystemIcons.Warning;
     }
     object Endpoint(string text) {
@@ -375,7 +400,7 @@ sealed class GuardWindow : Form {
             if(r!=null && r.Until<=now && String.IsNullOrEmpty(reason))reason="Срок проверки истёк.";
             if(reasons[i].Text!=reason)ShowReason(i,reason);
         }
-        string current=ProxyOnly?"Оценка IP носит справочный характер.":waiting>0?"Идёт проверка…":open==3?"Все три сервиса доступны":"Доступно сервисов: "+open+" из 3";
+        string current=ProxyOnly?(waiting>0?"Проверяем адреса…":open==3?"Замечаний по адресу нет.":"Есть замечания к выходному IP."):waiting>0?"Идёт проверка…":open==3?"Все три сервиса доступны":"Доступно сервисов: "+open+" из 3";
         if(status.Text!=current)State(current,open==3);
     }
     void SaveSmokeImage(string file){
