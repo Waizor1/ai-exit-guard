@@ -1,5 +1,6 @@
 {
   "repo": "QNIX-Dev/eligibility-antigravity-patcher",
   "path": "manager.py",
-  "commit": "90498f50353d414232f593dffe88899bc80b6312"
+  "commit": "bad5331ba28435dd24b8d60cc032a27aa95504db",
+  "note": "manager.py is identical at 90498f5 and bad5331; the vendored copy drops unused OAuth quota constants"
 }
