@@ -61,16 +61,35 @@ struct SavedProxy:Codable,Identifiable {
     let id:UUID
     var plan:ProxyPlan
     var ip:String
-    var title:String {let ep=plan.Common;return ep.Host+":"+String(ep.Port)}
+    var country:String?=nil
+    var title:String {
+        let ep=plan.Common
+        let addr=ep.Host+":"+String(ep.Port)
+        if let country, !country.isEmpty { return country+" · "+addr }
+        return addr
+    }
+    var connectionLine:String {
+        let ep=plan.Common
+        var c=URLComponents()
+        c.scheme=ep.Scheme
+        c.host=ep.Host
+        c.port=ep.Port
+        if !ep.User.isEmpty || !ep.Password.isEmpty { c.percentEncodedUser=ProxyEndpoint.credential(ep.User) }
+        if !ep.Password.isEmpty { c.percentEncodedPassword=ProxyEndpoint.credential(ep.Password) }
+        return c.string ?? "\(ep.Scheme)://\(ep.Host):\(ep.Port)"
+    }
 }
 struct ProxyLibrary:Codable {
     var entries:[SavedProxy]
     var current:UUID?
-    mutating func select(_ plan:ProxyPlan,ip:String,id:UUID?) {
+    mutating func select(_ plan:ProxyPlan,ip:String,id:UUID?,country:String?=nil) {
         let index=id.flatMap{key in entries.firstIndex{$0.id==key}}
-        if let index {entries[index].plan=plan;entries[index].ip=ip;current=entries[index].id}
-        else {
-            let entry=SavedProxy(id:UUID(),plan:plan,ip:ip)
+        if let index {
+            entries[index].plan=plan;entries[index].ip=ip
+            if let country, !country.isEmpty { entries[index].country=country }
+            current=entries[index].id
+        } else {
+            let entry=SavedProxy(id:UUID(),plan:plan,ip:ip,country:country)
             entries.append(entry);current=entry.id
         }
     }
@@ -105,7 +124,34 @@ enum SystemRoute {
         }
         return true
     }
+    private static func changeViaHelper(enable:Bool) -> (handled:Bool, ok:Bool, error:String) {
+        let conn = NSXPCConnection(machServiceName: guardServiceName, options: .privileged)
+        conn.remoteObjectInterface = NSXPCInterface(with: GuardRuleControl.self)
+        conn.resume()
+        defer { conn.invalidate() }
+        let sem = DispatchSemaphore(value: 0)
+        var handled = false
+        var ok = false
+        var errMsg = ""
+        let proxy = conn.remoteObjectProxyWithErrorHandler { _ in
+            sem.signal()
+        } as? GuardRuleControl
+        guard let proxy else { return (false, false, "") }
+        proxy.setSystemProxy(enable) { success, message in
+            handled = true
+            ok = success
+            errMsg = message
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 8)
+        return (handled, ok, errMsg)
+    }
     static func change(enable:Bool)throws {
+        let helper = changeViaHelper(enable: enable)
+        if helper.handled {
+            if helper.ok { return }
+            throw ProxyIssue(helper.error.isEmpty ? "Не удалось изменить настройки сети." : helper.error)
+        }
         var auth:AuthorizationRef?
         guard AuthorizationCreate(nil,nil,[],&auth)==errAuthorizationSuccess,let auth else {throw ProxyIssue("macOS не выдала разрешение.")}
         defer{AuthorizationFree(auth,[])}
@@ -170,6 +216,8 @@ final class ProxyClient:ObservableObject {
     @Published private(set) var plan:ProxyPlan?
     @Published private(set) var leases=[String:Int64]()
     @Published var profileMessage=""
+    @Published var copiedId:UUID?=nil
+    @Published var buyCountry="Нидерланды"
     var profileChanged:((String)->Void)?
     func expectedIP(_ service:String)->String {plan?.Profiles[service]?.Expected ?? expected}
     @Published private(set) var proxyOnly=false
@@ -663,6 +711,36 @@ final class ProxyClient:ObservableObject {
             return true
         } catch { message=error.localizedDescription; return false }
     }
+    func deleteSaved(_ entry:SavedProxy) {
+        guard !busy else {return}
+        do {
+            var book = try loadLibrary()
+            let wasCurrent = (book.current == entry.id)
+            book.entries.removeAll { $0.id == entry.id }
+            if wasCurrent { book.current = book.entries.first?.id }
+            if book.entries.isEmpty { ProxyVault.clear() }
+            else { try ProxyVault.save(try JSONEncoder().encode(book)) }
+            library = book
+            observations.removeValue(forKey: entry.id)
+            if ready && wasCurrent { disconnectAll() }
+        } catch { message = error.localizedDescription }
+    }
+    func copySaved(_ entry:SavedProxy) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.connectionLine, forType: .string)
+    }
+    func addPurchasedProxy(country:String, line:String, scheme:String="http") {
+        guard !busy else { return }
+        do {
+            let ep = try ProxyEndpoint(line, scheme: scheme)
+            var book = try loadLibrary()
+            let next = ProxyPlan(Common: ep, Profiles: [:])
+            book.select(next, ip: "", id: nil, country: country)
+            try ProxyVault.save(try JSONEncoder().encode(book))
+            library = book
+            if let entry = book.entries.last { selectSaved(entry) }
+        } catch { message = error.localizedDescription }
+    }
     func shutdown(){stop()}
 }
 
@@ -778,20 +856,38 @@ struct ProxyFields: View {
 
 struct ProxyEditor: View {
     @ObservedObject var proxy:ProxyClient
+    private let buyCountries=["Нидерланды","Германия","США","Финляндия","Великобритания","Сингапур","Япония"]
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             Text("Общий прокси").font(.title2.bold())
             if !proxy.library.entries.isEmpty {
                 Text("Сохранённые прокси").font(.headline)
                 ScrollView { VStack(alignment:.leading,spacing:8){ ForEach(proxy.library.entries) { entry in
-                    HStack {
+                    HStack(spacing:6) {
                         VStack(alignment:.leading) {
                             Text(entry.title).font(.headline)
                             Text(proxy.observations[entry.id] ?? (proxy.measuring ? "Проверяем выход…" : "Выход ещё не проверен")).font(.caption)
                         }
                         Spacer()
-                        if proxy.ready && proxy.library.current==entry.id {Text(proxy.plan?.CommonPaused==true ? "Общий на паузе":"Подключён").foregroundStyle(proxy.plan?.CommonPaused == true ? Color.secondary : Color.green)}
-                        else { Button("Подключить"){proxy.selectSaved(entry)}.disabled(proxy.busy) }
+                        Button {
+                            proxy.copySaved(entry)
+                            proxy.copiedId = entry.id
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                if proxy.copiedId == entry.id { proxy.copiedId = nil }
+                            }
+                        } label: {
+                            Image(systemName: proxy.copiedId == entry.id ? "checkmark" : "doc.on.doc")
+                        }.buttonStyle(.borderless).help("Скопировать строку прокси")
+                        if proxy.ready && proxy.library.current==entry.id {
+                            Text(proxy.plan?.CommonPaused==true ? "На паузе":"Подключён")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(proxy.plan?.CommonPaused == true ? Color.secondary : Color.green)
+                        } else {
+                            Button("Подключить"){proxy.selectSaved(entry)}.disabled(proxy.busy)
+                            Button { proxy.deleteSaved(entry) } label: {
+                                Image(systemName: "trash").foregroundStyle(.secondary)
+                            }.buttonStyle(.borderless).disabled(proxy.busy).help("Удалить прокси")
+                        }
                     }
                 }
                 }}.frame(maxHeight:160)
@@ -809,7 +905,7 @@ struct ProxyEditor: View {
             } else if proxy.replacing || (proxy.expected.isEmpty && proxy.library.entries.isEmpty) {
                 if proxy.replacing && (proxy.paused || proxy.ready || !proxy.library.entries.isEmpty) {Button("Отменить добавление"){proxy.replacing=false}}
                 ProxyFields(actionTitle: "Подключить", busy: proxy.busy, apply: proxy.connect)
-                Text("macOS запросит разрешение на настройку сети. Пароль хранится в Связке ключей.").font(.caption).foregroundStyle(.secondary)
+                Text("Данные прокси хранятся в Связке ключей macOS.").font(.caption).foregroundStyle(.secondary)
             } else if proxy.ready {
                 Text("Выбранный выход   "+proxy.expected).textSelection(.enabled)
                 if let plan=proxy.plan,!plan.Profiles.isEmpty {
@@ -817,6 +913,18 @@ struct ProxyEditor: View {
                     Button("Отключить все прокси"){proxy.replacing=false;proxy.disconnectAll()}.disabled(proxy.busy)
                 }else{Button("Отключить прокси"){proxy.replacing=false;proxy.disconnect()}.disabled(proxy.busy)}
             }
+            VStack(alignment:.leading,spacing:8) {
+                Label("Купить прокси", systemImage: "cart").font(.headline)
+                HStack(spacing:8) {
+                    Picker("Страна", selection: $proxy.buyCountry) {
+                        ForEach(buyCountries, id: \.self) { Text($0).tag($0) }
+                    }.labelsHidden()
+                    Button("Оплатить") {}.disabled(true)
+                }
+                Text("Скоро: после оплаты прокси сам сохранится в список и подключится.").font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal:false,vertical:true)
+            }.padding(10).frame(maxWidth:.infinity,alignment:.leading)
+             .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:10))
             if !proxy.routeWarning.isEmpty {Text(proxy.routeWarning).font(.callout).foregroundStyle(.orange)}
             if proxy.busy {ProgressView().controlSize(.small)}
             if !proxy.message.isEmpty {Text(proxy.message).font(.callout).fixedSize(horizontal:false,vertical:true)}

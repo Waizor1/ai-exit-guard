@@ -65,6 +65,7 @@ struct GuardPanel: View {
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }.padding(.vertical,6)
                 AntigravityPatchRow(patch:model.antigravity)
+                AppUpdateRow(updater:model.updater)
                 Button("Активные подключения"){model.showConnections=true}.buttonStyle(.link)
                 if !model.proxy.managesDomains && model.killSwitch.state != .off {
                     KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)
@@ -167,6 +168,9 @@ struct GuardPanel: View {
                     }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12))
                 }
                 if model.selectedService == nil {
+                    if model.updater.hasUpdate {
+                        UpdateBanner(updater:model.updater)
+                    }
                     MainProxyCard(monitor:model,proxy:proxy)
                     Button {model.showConnections=true} label:{
                         HStack {
@@ -175,6 +179,7 @@ struct GuardPanel: View {
                             Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
                         }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12)).contentShape(Rectangle())
                     }.buttonStyle(.plain)
+                    VectraConnectBanner()
                 }
                 if !needsProxy(model.selectedService) {
                     Divider()
@@ -190,6 +195,7 @@ struct GuardPanel: View {
                 }
             }
         }.padding(18).frame(width:408).fixedSize(horizontal:false,vertical:true)
+        .onAppear { model.updater.checkOnce() }
     }
     func usage(_ label:String,_ host:String)->some View {
         HStack {
@@ -258,6 +264,62 @@ struct GuardPanel: View {
                         if !r.InfoDetail.isEmpty {Text("IPinfo: "+r.InfoDetail)}
                     }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
+    }
+}
+
+private struct UpdateBanner:View {
+    @ObservedObject var updater:AppUpdater
+    var body:some View {
+        HStack(spacing:10) {
+            Image(systemName:"arrow.down.circle.fill").foregroundStyle(.blue).frame(width:20)
+            VStack(alignment:.leading,spacing:2) {
+                Text("Доступно обновление \(updater.latest)").font(.caption.weight(.semibold))
+                Text("Загрузка с GitHub").font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(updater.busy ? "Загрузка…" : "Обновить"){ updater.install() }
+                .buttonStyle(.borderedProminent).controlSize(.small).disabled(updater.busy)
+        }.padding(10).background(Color.blue.opacity(0.10),in:RoundedRectangle(cornerRadius:10))
+    }
+}
+
+private struct VectraConnectBanner:View {
+    var body:some View {
+        HStack(spacing:10) {
+            Image(systemName:"bolt.shield.fill").foregroundStyle(.blue).frame(width:24)
+            VStack(alignment:.leading,spacing:2) {
+                Text("Vectra Connect").font(.subheadline.weight(.semibold))
+                Text("Лучший VPN-сервис для быстрой и стабильной работы")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+            }
+            Spacer(minLength:4)
+            Button("Открыть") {
+                if let url = URL(string:"https://pay.vectra-pro.net/store") {
+                    NSWorkspace.shared.open(url)
+                }
+            }.controlSize(.small)
+        }.padding(12).background(Color.blue.opacity(0.08),in:RoundedRectangle(cornerRadius:12))
+    }
+}
+
+private struct AppUpdateRow:View {
+    @ObservedObject var updater:AppUpdater
+    var body:some View {
+        HStack(alignment:.top,spacing:10) {
+            Image(systemName:"arrow.down.app").frame(width:24).padding(.top,2)
+            VStack(alignment:.leading,spacing:2) {
+                Text("Обновления Guard")
+                Text(updater.summary).font(.caption)
+                    .foregroundStyle(updater.state=="error" ? Color.red : updater.hasUpdate ? Color.blue : Color.secondary)
+                    .fixedSize(horizontal:false,vertical:true)
+            }
+            Spacer(minLength:4)
+            if updater.hasUpdate {
+                Button("Обновить"){ updater.install() }.buttonStyle(.borderedProminent).disabled(updater.busy)
+            } else {
+                Button("Проверить"){ updater.check() }.disabled(updater.busy)
+            }
+        }.padding(.vertical,6)
     }
 }
 

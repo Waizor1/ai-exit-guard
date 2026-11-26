@@ -18,6 +18,12 @@ sealed class GuardWindow : Form {
         public bool AllowGoogleCountryMismatch {get; set;}
         public bool ProxyOnly {get;set;}
     }
+    sealed class SavedProxyItem {
+        public string Id {get;set;}
+        public string Country {get;set;}
+        public string Scheme {get;set;}
+        public string Line {get;set;}
+    }
     readonly string[] names = {"Общий", "Claude", "ChatGPT", "Antigravity"};
     readonly TextBox[] urls = new TextBox[4];
     readonly ProtocolPicker[] schemes = new ProtocolPicker[4];
@@ -47,6 +53,18 @@ sealed class GuardWindow : Form {
     readonly Label patchError=new Label{AutoSize=true,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(255,140,130),Visible=false,Margin=new Padding(4,0,4,2)};
     Button patchButton;
     bool patchBusy;
+    readonly Label updateState=new Label{AutoSize=true,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(198,196,194)};
+    Button updateButton;
+    TableLayoutPanel updateBanner;
+    Label updateBannerText;
+    Button updateBannerButton;
+    bool updateBusy;
+    string availableVersion="";
+    readonly string savedLibrary;
+    readonly List<SavedProxyItem> savedProxies=new List<SavedProxyItem>();
+    TableLayoutPanel savedProxiesCard;
+    TableLayoutPanel savedProxiesList;
+    ComboBox buyCountryBox;
     Button routeOptions;
     TableLayoutPanel optionalRoutes;
     readonly Label proxyBadge=new Label{AutoSize=true};
@@ -321,6 +339,7 @@ sealed class GuardWindow : Form {
         ownedDomains=Path.Combine(dataDirectory,"managed-domains");
         protection.Checked=false;
         saved=Path.Combine(dataDirectory,"routes.bin");
+        savedLibrary=Path.Combine(dataDirectory,"proxy-library.bin");
         Text="AI Exit Guard"; Font=new Font("Segoe UI",11F);
         AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
         ClientSize=new Size(480,Math.Min(730,Screen.FromControl(this).WorkingArea.Height-70));MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
@@ -388,7 +407,47 @@ sealed class GuardWindow : Form {
             catch(IOException){RelayEnded();}
         };
         actions.Controls.Add(checkAddress,1,0);home.Controls.Add(actions);
+        updateBanner=Card();updateBanner.BackColor=Color.FromArgb(38,52,72);updateBanner.ColumnCount=2;updateBanner.ColumnStyles.Clear();
+        updateBanner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));updateBanner.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        updateBannerText=Copy("Доступно обновление",true);updateBannerText.Margin=new Padding(2,4,6,4);
+        updateBanner.Controls.Add(updateBannerText,0,0);
+        updateBannerButton=ActionButton("Обновить",(sender,e)=>RunAppUpdate("install"));
+        updateBannerButton.BackColor=accent;updateBannerButton.ForeColor=Color.White;
+        updateBanner.Controls.Add(updateBannerButton,1,0);
+        updateBanner.Visible=false;home.Controls.Add(updateBanner);
+        var vectraCard=Card();vectraCard.BackColor=Color.FromArgb(40,50,66);vectraCard.ColumnCount=2;vectraCard.ColumnStyles.Clear();
+        vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var vectraTitle=Copy("Vectra Connect",true);vectraTitle.Margin=new Padding(2,2,4,1);
+        var vectraSub=Copy("Лучший VPN-сервис для быстрой и стабильной работы",false);vectraSub.Margin=new Padding(2,0,4,2);
+        var vectraText=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
+        vectraText.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        vectraText.Controls.Add(vectraTitle);vectraText.Controls.Add(vectraSub);
+        vectraCard.Controls.Add(vectraText,0,0);
+        var vectraOpen=ActionButton("Открыть",(sender,e)=>{try{Process.Start(new ProcessStartInfo("https://pay.vectra-pro.net/store"){UseShellExecute=true});}catch{}});
+        vectraOpen.BackColor=Color.FromArgb(62,76,98);vectraOpen.Anchor=AnchorStyles.Right;
+        vectraCard.Controls.Add(vectraOpen,1,0);
+        home.Controls.Add(vectraCard);
         var heading=Copy("Общий прокси",true);heading.Font=new Font(Font.FontFamily,18,FontStyle.Bold);settings.Controls.Add(heading);inputFeedback.ForeColor=Color.FromArgb(255,195,111);settings.Controls.Add(inputFeedback);ProxyInputs(settings,0);
+        savedProxiesCard=Card();
+        savedProxiesCard.Controls.Add(Copy("Сохранённые прокси",true));
+        savedProxiesList=new TableLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Top,ColumnCount=1,Margin=Padding.Empty};
+        savedProxiesList.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        savedProxiesCard.Controls.Add(savedProxiesList);
+        savedProxiesCard.Visible=false;
+        settings.Controls.Add(savedProxiesCard);
+        var buyCard=Card();
+        buyCard.Controls.Add(Copy("Купить прокси",true));
+        var buyRow=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,4,0,4)};
+        buyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));buyRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        buyCountryBox=new ComboBox{DropDownStyle=ComboBoxStyle.DropDownList,Dock=DockStyle.Fill,BackColor=Color.FromArgb(28,28,28),ForeColor=ink,FlatStyle=FlatStyle.Flat};
+        buyCountryBox.Items.AddRange(new object[]{"Нидерланды","Германия","США","Финляндия","Великобритания","Сингапур","Япония"});
+        buyCountryBox.SelectedIndex=0;
+        var buyPay=ActionButton("Оплатить",(sender,e)=>{});
+        buyPay.Enabled=false;buyPay.Margin=new Padding(8,0,0,0);
+        buyRow.Controls.Add(buyCountryBox,0,0);buyRow.Controls.Add(buyPay,1,0);
+        buyCard.Controls.Add(buyRow);
+        buyCard.Controls.Add(Copy("Скоро: после оплаты прокси сам сохранится в список и подключится.",false));
+        settings.Controls.Add(buyCard);
         urls[0].TextChanged+=(s,e)=>edit.Text=String.IsNullOrWhiteSpace(urls[0].Text)?"Добавить прокси":"Прокси";
         start.Anchor=AnchorStyles.Right;
         var fields=(TableLayoutPanel)paste[0].Parent;
@@ -412,6 +471,16 @@ sealed class GuardWindow : Form {
         patchButton.Click+=(sender,e)=>{if(!patchBusy)RunAntigravity(patchButton.Text=="Восстановить"?"restore":"patch");};
         patchCard.Controls.Add(patchButton);
         settings.Controls.Add(patchCard);
+        var updateCard=Card();
+        updateCard.Controls.Add(Copy("Обновления Guard",true));
+        updateState.Text="Версия "+Application.ProductVersion;updateState.Margin=new Padding(4,1,4,2);
+        updateCard.Controls.Add(updateState);
+        updateButton=ActionButton("Проверить",(sender,e)=>RunAppUpdate(String.IsNullOrEmpty(availableVersion)?"check":"install"));
+        updateButton.TextAlign=ContentAlignment.MiddleLeft;
+        updateCard.Controls.Add(updateButton);
+        settings.Controls.Add(updateCard);
+        LoadSavedProxies();
+        Shown+=(sender,e)=>{if(!smokeMode)RunAppUpdate("check");};
         pages.SelectedIndexChanged+=(sender,e)=>{if(pages.SelectedIndex==1 && !patchBusy)RunAntigravity("status");};
         ShowIdle("Выключен");
         tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWindow();};
@@ -491,6 +560,132 @@ sealed class GuardWindow : Form {
         }catch{}
         patchBusy=false;
         UpdatePatchUi(state,detail,version,rc,action);
+    }
+    void LoadSavedProxies(){
+        savedProxies.Clear();
+        try{
+            if(!File.Exists(savedLibrary))return;
+            byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(savedLibrary),null,DataProtectionScope.CurrentUser);
+            var items=json.Deserialize<List<SavedProxyItem>>(Encoding.UTF8.GetString(plain));
+            if(items!=null)savedProxies.AddRange(items);
+        }catch{}
+        RenderSavedProxies();
+    }
+    void PersistSavedProxies(){
+        try{
+            Directory.CreateDirectory(Path.GetDirectoryName(savedLibrary));
+            byte[] data=ProtectedData.Protect(Encoding.UTF8.GetBytes(json.Serialize(savedProxies)),null,DataProtectionScope.CurrentUser);
+            File.WriteAllBytes(savedLibrary,data);
+        }catch{}
+    }
+    void SaveProxyToLibrary(string scheme,string line,string country){
+        if(String.IsNullOrWhiteSpace(line))return;
+        string normScheme=(scheme??"HTTP").ToUpperInvariant();
+        string normLine=line.Trim();
+        var existing=savedProxies.FirstOrDefault(p=>String.Equals(p.Scheme,normScheme,StringComparison.OrdinalIgnoreCase) && p.Line==normLine);
+        if(existing!=null){
+            if(!String.IsNullOrEmpty(country))existing.Country=country;
+        }else{
+            savedProxies.Add(new SavedProxyItem{Id=Guid.NewGuid().ToString("N"),Country=country??"",Scheme=normScheme,Line=normLine});
+        }
+        PersistSavedProxies();
+        RenderSavedProxies();
+    }
+    public void AddPurchasedProxy(string country,string connectionLine){
+        try{
+            var ep=Endpoint(connectionLine);
+            string line=ep.User=="" && ep.Password==""?ep.Host+":"+ep.Port:Uri.EscapeDataString(ep.User)+":"+Uri.EscapeDataString(ep.Password)+"@"+ep.Host+":"+ep.Port;
+            SaveProxyToLibrary(ep.Scheme.ToUpperInvariant(),line,country);
+            schemes[0].Selected=ep.Scheme.ToUpperInvariant();
+            urls[0].Text=line;
+            if(relay!=null)Disconnect();
+            Connect();
+        }catch{}
+    }
+    static string SavedProxyTitle(SavedProxyItem item){
+        string host=item.Line??"";
+        int at=host.LastIndexOf('@');
+        if(at>=0 && at+1<host.Length)host=host.Substring(at+1);
+        return String.IsNullOrEmpty(item.Country)?host:item.Country+" · "+host;
+    }
+    void RenderSavedProxies(){
+        if(savedProxiesList==null)return;
+        savedProxiesList.SuspendLayout();
+        savedProxiesList.Controls.Clear();
+        foreach(var entry in savedProxies){
+            var item=entry;
+            var row=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=4,Margin=new Padding(0,2,0,2)};
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var title=Copy(SavedProxyTitle(item),false);title.ForeColor=ink;title.Margin=new Padding(2,6,4,2);
+            var use=ActionButton("Выбрать",(s,e)=>{
+                if(relay!=null)Disconnect();
+                schemes[0].Selected=item.Scheme;urls[0].Text=item.Line;
+            });
+            var copy=ActionButton("Копировать",(s,e)=>{
+                try{
+                    Clipboard.SetText(item.Scheme.ToLowerInvariant()+"://"+item.Line);
+                    var btn=(Button)s;btn.Text="Скопировано";
+                    var t=new Timer{Interval=1500};t.Tick+=(ts,te)=>{t.Stop();t.Dispose();if(!btn.IsDisposed)btn.Text="Копировать";};t.Start();
+                }catch{}
+            });
+            var del=ActionButton("×",(s,e)=>{savedProxies.RemoveAll(p=>p.Id==item.Id);PersistSavedProxies();RenderSavedProxies();});
+            row.Controls.Add(title,0,0);row.Controls.Add(use,1,0);row.Controls.Add(copy,2,0);row.Controls.Add(del,3,0);
+            savedProxiesList.Controls.Add(row);
+        }
+        savedProxiesList.ResumeLayout(true);
+        savedProxiesCard.Visible=savedProxies.Count>0;
+    }
+    async void RunAppUpdate(string action){
+        if(updateBusy)return;
+        updateBusy=true;updateButton.Enabled=false;updateBannerButton.Enabled=false;
+        updateState.Text=action=="install"?"Скачиваем обновление…":"Проверяем обновления…";
+        updateState.ForeColor=muted;
+        string output;
+        try{
+            output=await Task.Run(()=>{
+                var psi=new ProcessStartInfo(Path.Combine(dir,"guard-core.exe"),"app-update-"+action+" "+Application.ProductVersion){
+                    UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8};
+                using(var process=Process.Start(psi)){
+                    string text=process.StandardOutput.ReadToEnd();
+                    process.WaitForExit(300000);
+                    return text;
+                }
+            });
+        }catch(Exception ex){
+            output=json.Serialize(new Dictionary<string,object>{{"state","error"},{"detail",ex.Message}});
+        }
+        string state="error",latest="",detail="Не удалось проверить обновления";
+        try{
+            var report=json.Deserialize<Dictionary<string,object>>(output);
+            if(report!=null){
+                state=report.ContainsKey("state")?Convert.ToString(report["state"]):"error";
+                latest=report.ContainsKey("latest")?Convert.ToString(report["latest"]):"";
+                detail=report.ContainsKey("detail")?Convert.ToString(report["detail"]):"";
+            }
+        }catch{}
+        updateBusy=false;
+        if(state=="available" && !String.IsNullOrEmpty(latest)){
+            availableVersion=latest;
+            updateState.Text="Доступна версия "+latest;updateState.ForeColor=Color.FromArgb(130,190,255);
+            updateButton.Text="Обновить";updateButton.BackColor=accent;updateButton.Enabled=true;
+            updateBannerText.Text="Доступно обновление "+latest;updateBanner.Visible=true;updateBannerButton.Enabled=true;
+        }else if(state=="installing"){
+            updateState.Text=String.IsNullOrEmpty(detail)?"Устанавливаем обновление…":detail;
+            updateState.ForeColor=Color.FromArgb(120,200,140);
+            quitting=true;Close();
+        }else if(state=="current"){
+            availableVersion="";
+            updateState.Text="Установлена последняя версия ("+Application.ProductVersion+")";updateState.ForeColor=muted;
+            updateButton.Text="Проверить";updateButton.BackColor=card;updateButton.Enabled=true;
+            updateBanner.Visible=false;
+        }else{
+            updateState.Text=String.IsNullOrEmpty(detail)?"Не удалось проверить обновления":detail;
+            updateState.ForeColor=Color.FromArgb(255,140,130);
+            updateButton.Text="Проверить";updateButton.Enabled=true;updateBannerButton.Enabled=true;
+        }
     }
     void ShowRouteOptions(bool show){
         optionalRoutes.Visible=show;routeOptions.Text=show?"Отдельные прокси  ▾":"Отдельные прокси  ▸";
@@ -593,6 +788,7 @@ sealed class GuardWindow : Form {
             string temp=Path.Combine(Path.GetDirectoryName(saved),Guid.NewGuid().ToString()+".tmp");
             try{File.WriteAllBytes(temp,data);if(File.Exists(saved))File.Replace(temp,saved,null);else File.Move(temp,saved);}
             finally{if(File.Exists(temp))File.Delete(temp);}
+            SaveProxyToLibrary(schemes[0].Selected,urls[0].Text.Trim(),"");
             pages.SelectedIndex=0;inputFeedback.Visible=false;ShowIdle("Подключаем…");Inputs(false);start.Text="Отключить прокси";State(ProxyOnly?"Запускаем прокси…":"Проверяем адреса перед подключением.",false);
         }catch(FormatException){State("Проверьте строку прокси. Пример: логин:пароль@адрес:порт.",false);}
          catch{Stop();State("Не удалось запустить Guard или сохранить настройки.",false);}

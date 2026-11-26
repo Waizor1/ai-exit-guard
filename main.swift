@@ -58,6 +58,7 @@ final class Monitor: NSObject, ObservableObject {
     @Published var showHistory = false
     let proxy=ProxyClient()
     let antigravity=AntigravityPatch()
+    let updater=AppUpdater()
     var killSwitch:KillSwitch { proxy.domainRoutes }
     @Published var proxySettings=false
     @Published var showConnections=false
@@ -553,6 +554,86 @@ final class AntigravityPatch:ObservableObject {
                 default:
                     break
                 }
+            }
+        }
+    }
+}
+final class AppUpdater:ObservableObject {
+    struct Report:Decodable {
+        let state:String
+        let current:String?
+        let latest:String?
+        let tag:String?
+        let releaseUrl:String?
+        let detail:String?
+        let rc:Int?
+    }
+    @Published private(set) var state="idle"
+    @Published private(set) var latest=""
+    @Published private(set) var detail=""
+    @Published private(set) var releaseURL=""
+    @Published private(set) var busy=false
+    private var didInitialCheck=false
+
+    var hasUpdate:Bool { state=="available" && !latest.isEmpty }
+    var currentVersion:String {
+        (Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String) ?? "0.0.0"
+    }
+    var summary:String {
+        switch state {
+        case "checking": return "Проверяем обновления…"
+        case "downloading": return "Скачиваем обновление \(latest)…"
+        case "available": return "Доступна версия \(latest)"
+        case "current": return "Установлена последняя версия"
+        case "installing": return detail.isEmpty ? "Установщик обновления открыт" : detail
+        case "error": return detail.isEmpty ? "Не удалось проверить обновления" : detail
+        default: return "Версия \(currentVersion)"
+        }
+    }
+
+    func checkOnce() {
+        guard !didInitialCheck else { return }
+        didInitialCheck = true
+        check()
+    }
+    func check() { run("check") }
+    func install() { run("install") }
+
+    private func run(_ action:String) {
+        guard !busy else { return }
+        busy = true
+        state = action=="install" ? "downloading" : "checking"
+        detail = ""
+        let ver = currentVersion
+        let p = Process()
+        p.executableURL = Bundle.main.resourceURL?.appendingPathComponent("guard")
+        p.arguments = ["app-update-\(action)", ver]
+        let output = Pipe()
+        p.standardOutput = output
+        p.standardError = Pipe()
+        DispatchQueue.global(qos:.utility).async { [weak self] in
+            var report:Report?
+            do {
+                try p.run()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                if let line = data.split(separator:10).last,
+                   let decoded = try? JSONDecoder().decode(Report.self, from:Data(line)) {
+                    report = decoded
+                }
+            } catch {}
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.busy = false
+                guard let report else {
+                    self.state = "error"
+                    self.detail = "Не удалось запустить проверку обновлений"
+                    return
+                }
+                self.state = report.state
+                if let l = report.latest, !l.isEmpty { self.latest = l }
+                self.detail = report.detail ?? ""
+                self.releaseURL = report.releaseUrl ?? ""
             }
         }
     }

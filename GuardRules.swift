@@ -106,6 +106,7 @@ print "changed\n";
 
 @objc(GuardRuleControl) protocol GuardRuleControl {
     func setProtection(_ enabled: Bool, withReply reply: @escaping (Bool) -> Void)
+    func setSystemProxy(_ enabled: Bool, withReply reply: @escaping (Bool, String) -> Void)
     func publishDNS(_ hosts: [String], udp: FileHandle, tcp: FileHandle, withReply reply: @escaping (Bool) -> Void)
     func renewDNS(withReply reply: @escaping (Bool) -> Void)
     func clearDNS(withReply reply: @escaping (Bool) -> Void)

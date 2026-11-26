@@ -248,6 +248,10 @@ private final class RuleClient: NSObject, GuardRuleControl {
     func setProtection(_ enabled: Bool, withReply reply: @escaping (Bool) -> Void) {
         service.setProtection(enabled, peer: peer, withReply: reply)
     }
+
+    func setSystemProxy(_ enabled: Bool, withReply reply: @escaping (Bool, String) -> Void) {
+        service.setSystemProxy(enabled, peer: peer, withReply: reply)
+    }
 }
 
 // launchd supplies the client requirement from its root-owned plist.
@@ -295,6 +299,95 @@ final class RuleService: NSObject, NSXPCListenerDelegate {
                 self.refreshPending = false
             }
             reply(DirectRouteLock.read() == (enabled ? .on : .off))
+        }
+    }
+
+    private static let guardPAC = "http://127.0.0.1:39178/guard.pac"
+
+    private static func ownsPAC(_ d: [String: Any]) -> Bool {
+        (d["ProxyAutoConfigEnable"] as? NSNumber)?.boolValue == true &&
+            (d["ProxyAutoConfigURLString"] as? String) == guardPAC
+    }
+
+    private static func compatibleProxy(_ d: [String: Any]) -> Bool {
+        if d["HTTPSProxy"] as? String == "127.0.0.1", d["HTTPSPort"] as? Int == 39178,
+           d["HTTPProxy"] as? String == "127.0.0.1", d["HTTPPort"] as? Int == 39178,
+           d["SupplementalMatchDomain"] != nil || d["__MATCH_DOMAIN__"] != nil { return true }
+        for key in ["HTTPEnable", "HTTPSEnable", "SOCKSEnable", "ProxyAutoDiscoveryEnable"]
+            where (d[key] as? NSNumber)?.boolValue == true { return false }
+        if (d["ProxyAutoConfigEnable"] as? NSNumber)?.boolValue == true && !ownsPAC(d) { return false }
+        for value in d.values {
+            if let scoped = value as? [String: Any], !compatibleProxy(scoped) { return false }
+            if let group = value as? [[String: Any]], group.contains(where: { !compatibleProxy($0) }) { return false }
+        }
+        return true
+    }
+
+    func setSystemProxy(_ enabled: Bool, peer: NSXPCConnection?, withReply reply: @escaping (Bool, String) -> Void) {
+        writes.async {
+            guard self.isConsoleUser(peer) else { reply(false, "Недостаточно прав."); return }
+            guard let prefs = SCPreferencesCreate(nil, "AI Exit Guard" as CFString, nil),
+                  SCPreferencesLock(prefs, false) else {
+                reply(false, "Не удалось получить доступ к настройкам сети.")
+                return
+            }
+            defer { SCPreferencesUnlock(prefs) }
+            guard let set = SCNetworkSetCopyCurrent(prefs),
+                  let services = SCNetworkSetCopyServices(set) as? [SCNetworkService] else {
+                reply(false, "Сетевые подключения не найдены.")
+                return
+            }
+            var originals = [(SCNetworkProtocol, CFDictionary?)]()
+            for service in services {
+                guard let iface = SCNetworkServiceGetInterface(service),
+                      let kind = SCNetworkInterfaceGetInterfaceType(iface) as String?,
+                      let proto = SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeProxies) else { continue }
+                let original = SCNetworkProtocolGetConfiguration(proto)
+                var cfg = original as? [String: Any] ?? [:]
+                if enabled {
+                    guard SCNetworkServiceGetEnabled(service),
+                          ["Ethernet", "IEEE80211", "USB", "Thunderbolt", "VLAN", "Bond"].contains(kind) else { continue }
+                    guard Self.compatibleProxy(cfg),
+                          (cfg["ProxyAutoConfigURLString"] as? String ?? Self.guardPAC) == Self.guardPAC,
+                          cfg["ProxyAutoConfigJavaScript"] == nil else {
+                        reply(false, "В настройках сети уже задан другой прокси. Сохраните его настройки и выключите перед подключением Guard.")
+                        return
+                    }
+                    cfg["ProxyAutoConfigURLString"] = Self.guardPAC
+                    cfg["ProxyAutoConfigEnable"] = 1
+                } else {
+                    guard (cfg["ProxyAutoConfigURLString"] as? String) == Self.guardPAC else { continue }
+                    cfg.removeValue(forKey: "ProxyAutoConfigURLString")
+                    cfg.removeValue(forKey: "ProxyAutoConfigEnable")
+                }
+                guard SCNetworkProtocolSetConfiguration(proto, cfg as CFDictionary) else {
+                    reply(false, "macOS отклонила изменение маршрута.")
+                    return
+                }
+                originals.append((proto, original))
+            }
+            if originals.isEmpty {
+                if enabled { reply(false, "Не найдено подключение Wi-Fi или Ethernet.") }
+                else { reply(true, "") }
+                return
+            }
+            guard SCPreferencesCommitChanges(prefs) else {
+                reply(false, "macOS не сохранила настройки сети.")
+                return
+            }
+            if !SCPreferencesApplyChanges(prefs) {
+                var restored = true
+                for (proto, original) in originals {
+                    if !SCNetworkProtocolSetConfiguration(proto, original) { restored = false }
+                }
+                if !restored || !SCPreferencesCommitChanges(prefs) || !SCPreferencesApplyChanges(prefs) {
+                    reply(false, "Не удалось восстановить настройки. Проверьте автоматический прокси в настройках сети macOS.")
+                } else {
+                    reply(false, "macOS отклонила новый маршрут. Предыдущие настройки восстановлены.")
+                }
+                return
+            }
+            reply(true, "")
         }
     }
 

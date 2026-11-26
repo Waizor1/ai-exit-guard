@@ -569,6 +569,9 @@ func main() {
 	if len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "antigravity-") {
 		os.Exit(antigravityCommand(ctx, strings.TrimPrefix(os.Args[1], "antigravity-")))
 	}
+	if len(os.Args) == 3 && strings.HasPrefix(os.Args[1], "app-update-") {
+		os.Exit(appUpdateCommand(ctx, strings.TrimPrefix(os.Args[1], "app-update-"), os.Args[2]))
+	}
 	if len(os.Args) == 2 && (os.Args[1] == "t3-protect" || os.Args[1] == "t3-migrate") && runtime.GOOS == "darwin" {
 		home, homeErr := os.UserHomeDir()
 		exe, exeErr := os.Executable()
