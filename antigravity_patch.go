@@ -276,21 +276,34 @@ func antigravityApplyUpdate(ctx context.Context) antigravityReport {
 }
 
 func antigravityCommand(ctx context.Context, action string) int {
-	if runtime.GOOS != "darwin" {
-		fmt.Fprintln(os.Stderr, "Antigravity patching is available on macOS only")
-		return 1
-	}
-	var report antigravityReport
 	switch action {
-	case "status", "patch", "restore":
-		report = antigravityRun(ctx, action)
-	case "check-update":
-		report = antigravityCheckUpdate(ctx)
-	case "update":
-		report = antigravityApplyUpdate(ctx)
+	case "status", "patch", "restore", "check-update", "update":
 	default:
 		fmt.Fprintln(os.Stderr, "unknown antigravity action:", action)
 		return 2
+	}
+	var report antigravityReport
+	switch runtime.GOOS {
+	case "darwin":
+		switch action {
+		case "status", "patch", "restore":
+			report = antigravityRun(ctx, action)
+		case "check-update":
+			report = antigravityCheckUpdate(ctx)
+		case "update":
+			report = antigravityApplyUpdate(ctx)
+		}
+	case "windows":
+		switch action {
+		case "status", "patch", "restore":
+			report = antigravityPERun(action)
+		default:
+			report = antigravityReport{State: "update", Rc: 0, Update: "current",
+				Detail: "На Windows патчер встроен в Guard и обновляется вместе с ним."}
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "Antigravity patching is available on macOS and Windows only")
+		return 1
 	}
 	enc := json.NewEncoder(os.Stdout)
 	if err := enc.Encode(report); err != nil {

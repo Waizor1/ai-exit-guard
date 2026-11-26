@@ -43,6 +43,9 @@ sealed class GuardWindow : Form {
     readonly Button checkAddress=new SoftButton();
     readonly Label lastResult=new Label{Text="Адрес ещё не проверен",AutoSize=true,Anchor=AnchorStyles.Left};
     readonly Label modeHint=new Label {AutoSize=true,Dock=DockStyle.Fill};
+    readonly Label patchState=new Label{AutoSize=true,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(198,196,194)};
+    Button patchButton;
+    bool patchBusy;
     Button routeOptions;
     TableLayoutPanel optionalRoutes;
     readonly Label proxyBadge=new Label{AutoSize=true};
@@ -398,6 +401,16 @@ sealed class GuardWindow : Form {
         dns.Visible=!smoke && DomainRulesPresent() && !File.Exists(ownedDomains);
         dns.Click+=(sender,e)=>{try{SetDomains(false);dns.Visible=false;}catch{State("Windows не сняла правило доменов.",false);}};
         settings.Controls.Add(dns);
+        var patchCard=Card();
+        patchCard.Controls.Add(Copy("Патч Antigravity",true));
+        patchState.Margin=new Padding(4,1,4,2);
+        patchCard.Controls.Add(patchState);
+        patchButton=ActionButton("Проверить",(sender,e)=>{});
+        patchButton.TextAlign=ContentAlignment.MiddleLeft;patchButton.Enabled=false;
+        patchButton.Click+=(sender,e)=>{if(!patchBusy)RunAntigravity(patchButton.Text=="Восстановить"?"restore":"patch");};
+        patchCard.Controls.Add(patchButton);
+        settings.Controls.Add(patchCard);
+        pages.SelectedIndexChanged+=(sender,e)=>{if(pages.SelectedIndex==1 && !patchBusy)RunAntigravity("status");};
         ShowIdle("Выключен");
         tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWindow();};
         var menu=new ContextMenuStrip();menu.Items.Add("Открыть",null,(s,e)=>ShowWindow());
@@ -418,6 +431,53 @@ sealed class GuardWindow : Form {
             }catch{State("Не удалось прочитать сохранённые прокси.",false);}
         }
         ResumeLayout(true);
+    }
+    void UpdatePatchUi(string state,string detail,string version){
+        string suffix=String.IsNullOrEmpty(version)?"":" · Antigravity "+version;
+        switch(state){
+            case "patched":
+                patchState.Text="Пропатчен"+suffix;patchState.ForeColor=Color.FromArgb(120,200,140);
+                patchButton.Text="Восстановить";patchButton.Enabled=true;break;
+            case "unpatched":
+                patchState.Text="Не пропатчен"+suffix;patchState.ForeColor=muted;
+                patchButton.Text="Пропатчить";patchButton.Enabled=true;break;
+            case "missing":
+                patchState.Text="Antigravity не найдена";patchState.ForeColor=muted;
+                patchButton.Text="Пропатчить";patchButton.Enabled=false;break;
+            case "unsupported":
+                patchState.Text=String.IsNullOrEmpty(detail)?"Версия не поддерживается":detail;
+                patchState.ForeColor=Color.FromArgb(255,195,111);patchButton.Text="Пропатчить";patchButton.Enabled=false;break;
+            default:
+                patchState.Text=String.IsNullOrEmpty(detail)?"Ошибка патчера":detail;
+                patchState.ForeColor=Color.FromArgb(255,195,111);
+                patchButton.Text="Повторить";patchButton.Enabled=true;break;
+        }
+    }
+    async void RunAntigravity(string action){
+        if(patchBusy)return;
+        patchBusy=true;patchButton.Enabled=false;
+        if(action=="status"){patchState.Text="Проверяем…";patchState.ForeColor=muted;}
+        else{patchState.Text=action=="restore"?"Восстанавливаем…":"Патчим…";patchState.ForeColor=muted;}
+        string output;
+        try{
+            output=await Task.Run(()=>{
+                var psi=new ProcessStartInfo(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"guard-core.exe"),"antigravity-"+action){
+                    UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8};
+                using(var process=Process.Start(psi)){
+                    string text=process.StandardOutput.ReadToEnd();
+                    process.WaitForExit(900000);
+                    return text;
+                }
+            });
+        }catch(Exception ex){
+            output=json.Serialize(new Dictionary<string,object>{{"state","error"},{"detail",ex.Message}});
+        }
+        var report=json.Deserialize<Dictionary<string,object>>(output)??new Dictionary<string,object>();
+        string state=report.ContainsKey("state")?Convert.ToString(report["state"]):"error";
+        string detail=report.ContainsKey("detail")?Convert.ToString(report["detail"]):"";
+        string version=report.ContainsKey("version")?Convert.ToString(report["version"]):"";
+        patchBusy=false;
+        UpdatePatchUi(state,detail,version);
     }
     void ShowRouteOptions(bool show){
         optionalRoutes.Visible=show;routeOptions.Text=show?"Отдельные прокси  ▾":"Отдельные прокси  ▸";
