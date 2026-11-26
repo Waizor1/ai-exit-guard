@@ -1,5 +1,11 @@
 name: Guard cross-platform checks
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [main, 'feat/**', 'feature/**', 'fix/**']
+  workflow_dispatch:
+concurrency:
+  group: guard-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

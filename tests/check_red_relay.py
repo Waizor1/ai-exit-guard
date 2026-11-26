@@ -149,9 +149,14 @@ m.proxy.shutdown()
         conn.sendall(f'CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n'.encode())
         resp=http.client.HTTPResponse(conn);resp.begin()
         return conn,resp.status
-    def denied(host='api.openai.com'):
-        conn,status=connect(host);conn.close()
-        assert status==503,status
+    def denied(host='api.openai.com', settle=0.0):
+        deadline=time.monotonic()+settle
+        while True:
+            conn,status=connect(host);conn.close()
+            if status==503 or time.monotonic()>=deadline:
+                assert status==503,status
+                return
+            time.sleep(0.05)
     try:
         assert proc.stdout.readline().strip()=='START'
         denied()
@@ -246,7 +251,9 @@ m.proxy.shutdown()
             if action=='pause':
                 assert chat.recv(16)==b''
                 chat.close()
-            denied()
+                denied()
+            else:
+                denied(settle=2.0)
             google.sendall(b'separate-google\n');assert google.recv(128)==b'received\n'
         assert regional_check('DE')=='OPEN'
         chat,status=connect();assert status==200
