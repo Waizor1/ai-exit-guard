@@ -62,6 +62,9 @@ for client in codex claude antigravity; do
  install -m 755 packaging/guarded-client "$res/guarded-$client"
 done
 install -m 755 packaging/guarded-client "$res/agy"
+mkdir -p "$res/antigravity"
+install -m 644 packaging/antigravity/bridge.py packaging/antigravity/antigravity_patcher.py packaging/antigravity/VERSION "$res/antigravity/"
+install -m 644 packaging/antigravity/LICENSE.antigravity-patcher "$res/antigravity/"
 cp Инструкция.txt packaging/*.command "$res/"
 cp Info.plist "$app/Contents/Info.plist"
 sign=(--force --options runtime --sign "${identity:--}")

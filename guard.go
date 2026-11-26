@@ -566,6 +566,9 @@ func main() {
 		fmt.Println(path)
 		return
 	}
+	if len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "antigravity-") && runtime.GOOS == "darwin" {
+		os.Exit(antigravityCommand(ctx, strings.TrimPrefix(os.Args[1], "antigravity-")))
+	}
 	if len(os.Args) == 2 && (os.Args[1] == "t3-protect" || os.Args[1] == "t3-migrate") && runtime.GOOS == "darwin" {
 		home, homeErr := os.UserHomeDir()
 		exe, exeErr := os.Executable()

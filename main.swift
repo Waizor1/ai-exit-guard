@@ -57,6 +57,7 @@ final class Monitor: NSObject, ObservableObject {
     @Published var technical = false
     @Published var showHistory = false
     let proxy=ProxyClient()
+    let antigravity=AntigravityPatch()
     var killSwitch:KillSwitch { proxy.domainRoutes }
     @Published var proxySettings=false
     @Published var showConnections=false
@@ -414,6 +415,146 @@ final class Monitor: NSObject, ObservableObject {
             do {try SMAppService.mainApp.register()} catch {note="Скопируйте приложение в Программы и включите автозапуск в настройках macOS"}
             readPermissions()
         } else {SMAppService.openSystemSettingsLoginItems()}
+    }
+}
+
+// Patches the Antigravity eligibility gate through the bundled helper.
+// State comes from `guard antigravity-status|patch|restore|check-update|update`,
+// one JSON line each.
+final class AntigravityPatch:ObservableObject {
+    struct Report:Decodable {
+        let state:String
+        let path:String?
+        let version:String?
+        let detail:String?
+        let rc:Int?
+        let engine:String?
+        let engineAt:String?
+        let update:String?
+        let commit:String?
+    }
+    @Published private(set) var state="unknown"
+    @Published private(set) var version=""
+    @Published private(set) var detail=""
+    @Published private(set) var actionError=""
+    @Published private(set) var busy=false
+    @Published private(set) var update=""
+    @Published private(set) var updateDetail=""
+    @Published private(set) var engineAt=""
+    private var generation=0
+
+    var title:String {
+        switch state {
+        case "patched": return "Пропатчен"
+        case "unpatched": return "Не пропатчен"
+        case "missing": return "Antigravity не найден"
+        case "unsupported": return "Версия не поддерживается"
+        case "working": return "Патчим…"
+        case "restoring": return "Восстанавливаем…"
+        case "error": return "Ошибка"
+        default: return "Проверяем…"
+        }
+    }
+    var symbol:String {
+        switch state {
+        case "patched": return "checkmark.seal.fill"
+        case "unpatched": return "exclamationmark.triangle.fill"
+        case "missing","unsupported": return "questionmark.circle"
+        case "error": return "xmark.octagon.fill"
+        default: return "hourglass"
+        }
+    }
+    var tint:Color {
+        switch state {
+        case "patched": return .green
+        case "unpatched": return .orange
+        case "error": return .red
+        default: return .secondary
+        }
+    }
+    var subtitle:String {
+        if state=="patched" || state=="unpatched" {
+            return version.isEmpty ? "" : "Antigravity \(version)"
+        }
+        return detail.isEmpty ? "Патч доступа к аккаунту Google" : detail
+    }
+    var canPatch:Bool { !busy && (state=="unpatched" || state=="error" || state=="unsupported") }
+    var canRestore:Bool { !busy && state=="patched" }
+    var updateNote:String {
+        switch update {
+        case "available": return "Доступно обновление патчера"
+        case "current": return "Патчер актуален"
+        case "installed": return engineAt.isEmpty ? "Патчер обновлён" : "Патчер обновлён \(engineAt)"
+        case "error": return updateDetail.isEmpty ? "Не удалось проверить обновление" : updateDetail
+        case "working": return "Скачиваем патчер…"
+        default: return ""
+        }
+    }
+    var canInstallUpdate:Bool { !busy && update=="available" }
+
+    func refresh() { run("status") }
+    func apply() { run("patch") }
+    func restore() { run("restore") }
+    func checkUpdate() { run("check-update") }
+    func installUpdate() { run("update") }
+
+    private func run(_ action:String) {
+        guard !busy else {return}
+        busy=true
+        generation+=1
+        let token=generation
+        if action=="patch" {state="working";detail="";actionError=""}
+        if action=="restore" {state="restoring";detail="";actionError=""}
+        if action=="status" {actionError=""}
+        if action=="update" {update="working";updateDetail=""}
+        let p=Process()
+        p.executableURL=Bundle.main.resourceURL?.appendingPathComponent("guard")
+        p.arguments=["antigravity-\(action)"]
+        let output=Pipe()
+        p.standardOutput=output
+        p.standardError=Pipe()
+        DispatchQueue.global(qos:.userInitiated).async { [weak self] in
+            var report:Report?
+            do {
+                try p.run()
+                let data=output.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                if let line=data.split(separator:10).last,
+                   let decoded=try? JSONDecoder().decode(Report.self,from:Data(line)) {
+                    report=decoded
+                }
+            } catch {}
+            DispatchQueue.main.async {
+                guard let self=self,self.generation==token else {return}
+                self.busy=false
+                guard let report else {
+                    if action=="check-update" || action=="update" {self.update="error";self.updateDetail="Не удалось запустить патчер"}
+                    else {self.state="error";self.detail="Не удалось запустить патчер"}
+                    return
+                }
+                switch action {
+                case "status","patch","restore":
+                    self.state=report.state
+                    self.version=report.version ?? ""
+                    self.detail=report.detail ?? ""
+                    if (action=="patch" || action=="restore") && (report.rc ?? 0) != 0 && (report.state=="patched" || report.state=="unpatched") {
+                        self.actionError=self.detail.isEmpty ? "Не удалось выполнить операцию" : self.detail
+                    } else {
+                        self.actionError=""
+                    }
+                case "check-update":
+                    self.update=report.update ?? "error"
+                    self.updateDetail=report.detail ?? ""
+                case "update":
+                    self.update=report.update ?? "error"
+                    self.updateDetail=report.detail ?? ""
+                    self.engineAt=report.engineAt ?? ""
+                    if report.update=="installed" {self.run("status")}
+                default:
+                    break
+                }
+            }
+        }
     }
 }
 final class MenuSpinner:NSProgressIndicator {

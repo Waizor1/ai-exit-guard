@@ -64,6 +64,7 @@ struct GuardPanel: View {
                     Toggle("Защищённый DNS (DoT)",isOn:Binding(get:{ model.systemDNSEnabled },set:{ model.setSystemDNSEnabled($0) }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }.padding(.vertical,6)
+                AntigravityPatchRow(patch:model.antigravity)
                 Button("Активные подключения"){model.showConnections=true}.buttonStyle(.link)
                 if !model.proxy.managesDomains && model.killSwitch.state != .off {
                     KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)
@@ -257,6 +258,54 @@ struct GuardPanel: View {
                         if !r.InfoDetail.isEmpty {Text("IPinfo: "+r.InfoDetail)}
                     }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
+    }
+}
+
+private struct AntigravityPatchRow:View {
+    @ObservedObject var patch:AntigravityPatch
+    var body:some View {
+        HStack(alignment:.top,spacing:10) {
+            Image(systemName:"wrench.and.screwdriver").frame(width:24).padding(.top,2)
+            VStack(alignment:.leading,spacing:2) {
+                Text("Патч Antigravity")
+                Label(patch.title,systemImage:patch.symbol)
+                    .font(.caption).foregroundStyle(patch.tint)
+                if !patch.subtitle.isEmpty {
+                    Text(patch.subtitle).font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal:false,vertical:true)
+                }
+                if !patch.actionError.isEmpty {
+                    Text(patch.actionError).font(.caption2).foregroundStyle(Color.red)
+                        .fixedSize(horizontal:false,vertical:true)
+                }
+                if !patch.updateNote.isEmpty {
+                    Text(patch.updateNote)
+                        .font(.caption2)
+                        .foregroundStyle(patch.update=="error" ? Color.red : Color.secondary)
+                        .fixedSize(horizontal:false,vertical:true)
+                }
+                if patch.canInstallUpdate {
+                    Button("Обновить патчер"){ patch.installUpdate() }
+                        .buttonStyle(.link).font(.caption)
+                }
+            }
+            Spacer(minLength:4)
+            HStack(spacing:6) {
+                Button { patch.checkUpdate() } label:{ Image(systemName:"arrow.triangle.2.circlepath") }
+                    .buttonStyle(.borderless).disabled(patch.busy)
+                    .accessibilityLabel("Проверить обновление патчера")
+                Button { patch.refresh() } label:{ Image(systemName:"arrow.clockwise") }
+                    .buttonStyle(.borderless).disabled(patch.busy)
+                    .accessibilityLabel("Проверить состояние патча")
+                if patch.canRestore {
+                    Button("Восстановить"){ patch.restore() }.disabled(patch.busy)
+                } else {
+                    Button("Пропатчить"){ patch.apply() }
+                        .buttonStyle(.borderedProminent).disabled(!patch.canPatch)
+                }
+            }
+        }.padding(.vertical,6)
+        .onAppear { patch.refresh() }
     }
 }
 
