@@ -297,7 +297,10 @@ func antigravityWriteBackup(binary, backup string, data []byte) error {
 		}
 		return nil
 	}
-	return antigravityWriteFile(backup, data)
+	if err := antigravityWriteFile(backup, data); err != nil {
+		return errors.New(antigravityPEWriteHint(err))
+	}
+	return nil
 }
 
 func antigravityWriteFile(path string, data []byte) error {

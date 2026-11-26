@@ -7,6 +7,10 @@ if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable
     if($ui.ExitCode -ne 0){throw "Native form test failed at stage $($ui.ExitCode)"}
     $profile=Get-Content -Raw (Join-Path $dir 'AI Exit Guard.pbprofile') | ConvertFrom-Json
     if($profile.ProxyConfigs[0].Host -ne '127.0.0.1' -or $profile.ProxyConfigs[0].Port -ne '39178'){throw 'Wrong relay'}
+    $agRaw=& (Join-Path $dir 'guard-core.exe') antigravity-status
+    if($LASTEXITCODE -ne 0){throw "antigravity-status failed with exit code $LASTEXITCODE"}
+    $ag=$agRaw | ConvertFrom-Json
+    if($ag.state -ne 'missing' -or $ag.rc -ne 0){throw "Unexpected antigravity-status output: $agRaw"}
     $psi=New-Object Diagnostics.ProcessStartInfo
     $psi.FileName=Join-Path $dir 'guard-core.exe';$psi.Arguments='desktop-relay'
     $psi.UseShellExecute=$false;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true

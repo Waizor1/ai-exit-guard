@@ -44,6 +44,7 @@ sealed class GuardWindow : Form {
     readonly Label lastResult=new Label{Text="Адрес ещё не проверен",AutoSize=true,Anchor=AnchorStyles.Left};
     readonly Label modeHint=new Label {AutoSize=true,Dock=DockStyle.Fill};
     readonly Label patchState=new Label{AutoSize=true,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(198,196,194)};
+    readonly Label patchError=new Label{AutoSize=true,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(255,140,130),Visible=false,Margin=new Padding(4,0,4,2)};
     Button patchButton;
     bool patchBusy;
     Button routeOptions;
@@ -405,6 +406,7 @@ sealed class GuardWindow : Form {
         patchCard.Controls.Add(Copy("Патч Antigravity",true));
         patchState.Margin=new Padding(4,1,4,2);
         patchCard.Controls.Add(patchState);
+        patchCard.Controls.Add(patchError);
         patchButton=ActionButton("Проверить",(sender,e)=>{});
         patchButton.TextAlign=ContentAlignment.MiddleLeft;patchButton.Enabled=false;
         patchButton.Click+=(sender,e)=>{if(!patchBusy)RunAntigravity(patchButton.Text=="Восстановить"?"restore":"patch");};
@@ -432,8 +434,11 @@ sealed class GuardWindow : Form {
         }
         ResumeLayout(true);
     }
-    void UpdatePatchUi(string state,string detail,string version){
+    void UpdatePatchUi(string state,string detail,string version,int rc,string action){
         string suffix=String.IsNullOrEmpty(version)?"":" · Antigravity "+version;
+        bool showError=(action=="patch" || action=="restore") && rc!=0 && (state=="patched" || state=="unpatched");
+        patchError.Text=showError?(String.IsNullOrEmpty(detail)?"Не удалось выполнить операцию":detail):"";
+        patchError.Visible=showError;
         switch(state){
             case "patched":
                 patchState.Text="Пропатчен"+suffix;patchState.ForeColor=Color.FromArgb(120,200,140);
@@ -456,6 +461,7 @@ sealed class GuardWindow : Form {
     async void RunAntigravity(string action){
         if(patchBusy)return;
         patchBusy=true;patchButton.Enabled=false;
+        patchError.Visible=false;patchError.Text="";
         if(action=="status"){patchState.Text="Проверяем…";patchState.ForeColor=muted;}
         else{patchState.Text=action=="restore"?"Восстанавливаем…":"Патчим…";patchState.ForeColor=muted;}
         string output;
@@ -470,14 +476,21 @@ sealed class GuardWindow : Form {
                 }
             });
         }catch(Exception ex){
-            output=json.Serialize(new Dictionary<string,object>{{"state","error"},{"detail",ex.Message}});
+            output=json.Serialize(new Dictionary<string,object>{{"state","error"},{"detail",ex.Message},{"rc",1}});
         }
-        var report=json.Deserialize<Dictionary<string,object>>(output)??new Dictionary<string,object>();
-        string state=report.ContainsKey("state")?Convert.ToString(report["state"]):"error";
-        string detail=report.ContainsKey("detail")?Convert.ToString(report["detail"]):"";
-        string version=report.ContainsKey("version")?Convert.ToString(report["version"]):"";
+        string state="error",detail="Не удалось разобрать ответ патчера",version="";
+        int rc=1;
+        try{
+            var report=json.Deserialize<Dictionary<string,object>>(output);
+            if(report!=null){
+                state=report.ContainsKey("state")?Convert.ToString(report["state"]):"error";
+                detail=report.ContainsKey("detail")?Convert.ToString(report["detail"]):"";
+                version=report.ContainsKey("version")?Convert.ToString(report["version"]):"";
+                rc=report.ContainsKey("rc")?Convert.ToInt32(report["rc"]):0;
+            }
+        }catch{}
         patchBusy=false;
-        UpdatePatchUi(state,detail,version);
+        UpdatePatchUi(state,detail,version,rc,action);
     }
     void ShowRouteOptions(bool show){
         optionalRoutes.Visible=show;routeOptions.Text=show?"Отдельные прокси  ▾":"Отдельные прокси  ▸";
