@@ -53,6 +53,7 @@ struct GuardPanel: View {
                 Button("Общий прокси"){model.proxySettings=true}.buttonStyle(.link)
                 setting("bell","Уведомления",model.notificationState,model.notificationState=="Разрешены" ? "Тест" : model.notificationState=="Выключены" ? "Настройки" : "Разрешить",model.notifications)
                 setting("power","Запуск при входе",model.loginState,model.loginState=="Выключен" ? "Включить" : "Настройки",model.login)
+                Divider()
                 HStack(alignment:.top,spacing:10) {
                     Image(systemName:"lock.shield").frame(width:24).padding(.top,2)
                     VStack(alignment:.leading,spacing:2) {
@@ -64,6 +65,7 @@ struct GuardPanel: View {
                     Toggle("Защищённый DNS (DoT)",isOn:Binding(get:{ model.systemDNSEnabled },set:{ model.setSystemDNSEnabled($0) }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }.padding(.vertical,6)
+                Divider()
                 AntigravityPatchRow(patch:model.antigravity)
                 AppUpdateRow(updater:model.updater)
                 Button("Активные подключения"){model.showConnections=true}.buttonStyle(.link)
@@ -105,6 +107,9 @@ struct GuardPanel: View {
                     diagnostics(host,service)
                 }
             } else {
+                if model.selectedService == nil && model.updater.hasUpdate {
+                    UpdateBanner(updater:model.updater)
+                }
                 if paused(model.selectedService) {
                     VStack(alignment:.leading,spacing:6) {
                         Label("Прокси на паузе",systemImage:"pause.circle").font(.title2.bold())
@@ -168,9 +173,6 @@ struct GuardPanel: View {
                     }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12))
                 }
                 if model.selectedService == nil {
-                    if model.updater.hasUpdate {
-                        UpdateBanner(updater:model.updater)
-                    }
                     MainProxyCard(monitor:model,proxy:proxy)
                     Button {model.showConnections=true} label:{
                         HStack {

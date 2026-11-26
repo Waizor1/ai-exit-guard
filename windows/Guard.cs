@@ -316,13 +316,9 @@ sealed class GuardWindow : Form {
         version.AccessibleName="Версия "+version.Text;version.Margin=new Padding(2,8,2,4);
         identity.Controls.Add(version);header.Controls.Add(identity,1,0);
         if(pages.TabCount==1){
-            var settingsMenu=DarkMenu();
-            settingsMenu.Items.Add("Прокси",null,(s,e)=>pages.SelectedIndex=1);
-            settingsMenu.Items.Add("Активные подключения",null,(s,e)=>pages.SelectedIndex=2);
-            settingsMenu.Items.Add("Завершить Guard",null,(s,e)=>{quitting=true;Close();});
-            foreach(ToolStripItem mi in settingsMenu.Items)mi.ForeColor=ink;
-            header.Controls.Add(ActionButton("Настройки",(sender,e)=>{var button=(Button)sender;settingsMenu.Show(button,0,button.Height+2);}),2,0);
-            Disposed+=(s,e)=>settingsMenu.Dispose();
+            var gear=ActionButton("Настройки",(sender,e)=>pages.SelectedIndex=3);
+            gear.Anchor=AnchorStyles.Right;
+            header.Controls.Add(gear,2,0);
         }
         grid.Controls.Add(header);
         return grid;
@@ -397,7 +393,7 @@ sealed class GuardWindow : Form {
         addresses[i]=AddEntry(parts,"Адрес и порт",i);
         logins[i]=AddEntry(parts,"Логин",i);passwords[i]=AddEntry(parts,"Пароль",i);
         slot.Controls.Add(parts);
-        byField[i]=new DarkCheckBox{Text="Ввести по полям"};
+        byField[i]=new DarkCheckBox{Text="Ввести по полям",Anchor=AnchorStyles.Right};
         fields.Controls.Add(byField[i],1,0);
         bool filling=false;
         byField[i].CheckedChanged+=(sender,e)=>{
@@ -485,18 +481,18 @@ sealed class GuardWindow : Form {
         captionFont=new Font("Segoe UI",8.5F);
         headingFont=new Font("Segoe UI Semibold",10F);
         AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
-        ClientSize=new Size(450,Math.Min(760,Screen.FromControl(this).WorkingArea.Height-48));MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
+        ClientSize=new Size(450,Math.Min(785,Screen.FromControl(this).WorkingArea.Height-40));MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
         pages.Appearance=TabAppearance.FlatButtons;pages.SizeMode=TabSizeMode.Fixed;pages.ItemSize=new Size(0,1);pages.TabStop=false;
         Controls.Add(pages);
-        var home=Page("Главная");var settings=Page("Настройки");
-        summary=Card();summary.Padding=new Padding(14,11,14,11);
+        var home=Page("Главная");var settings=Page("Прокси");
+        summary=Card();summary.Padding=new Padding(14,10,14,10);
         var heroRow=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=Padding.Empty,BackColor=Color.Transparent};
         heroRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));heroRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        verdictGlyph=new Glyph(Mark.Shield,ink);verdictGlyph.Size=new Size(22,22);verdictGlyph.Margin=new Padding(0,4,9,0);
+        verdictGlyph=new Glyph(Mark.Shield,ink);verdictGlyph.Size=new Size(22,22);verdictGlyph.Anchor=AnchorStyles.Left;verdictGlyph.Margin=new Padding(0,2,9,0);
         heroRow.Controls.Add(verdictGlyph,0,0);
-        verdict.Font=new Font("Segoe UI Semibold",15.5F);verdict.Margin=new Padding(0,0,0,2);heroRow.Controls.Add(verdict,1,0);
+        verdict.Font=new Font("Segoe UI Semibold",15.5F);verdict.Margin=new Padding(0,0,0,1);heroRow.Controls.Add(verdict,1,0);
         summary.Controls.Add(heroRow);
-        status.AccessibleName="Причина текущего состояния";status.Dock=DockStyle.Fill;status.Margin=new Padding(0,3,0,1);status.ForeColor=muted;status.Font=captionFont;summary.Controls.Add(status);home.Controls.Add(summary);
+        status.AccessibleName="Причина текущего состояния";status.Dock=DockStyle.Fill;status.Margin=new Padding(0,2,0,1);status.ForeColor=muted;status.Font=captionFont;summary.Controls.Add(status);home.Controls.Add(summary);
         var results=Card();results.ColumnCount=3;results.ColumnStyles.Clear();results.Padding=new Padding(14,9,14,9);
         results.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,44));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,56));
         var services=Copy("Сервисы",true);services.Font=captionFont;services.Margin=new Padding(0,0,0,5);services.ForeColor=muted;
@@ -529,7 +525,7 @@ sealed class GuardWindow : Form {
         var proxyIcon=new Glyph(Mark.Globe,muted);proxyIcon.Size=new Size(18,18);proxyIcon.Margin=new Padding(0,3,8,0);
         var edit=Copy("Добавить прокси",true);edit.Margin=new Padding(0,2,4,2);edit.Cursor=Cursors.Hand;
         proxyBadge.ForeColor=muted;proxyBadge.Font=captionFont;proxyBadge.Margin=new Padding(4,3,4,2);proxyBadge.Cursor=Cursors.Hand;
-        var proxyChev=Copy("›",false);proxyChev.Font=new Font("Segoe UI",11F);proxyChev.Margin=new Padding(0,0,0,0);proxyChev.Cursor=Cursors.Hand;
+        var proxyChev=Copy("›",false);proxyChev.Font=new Font("Segoe UI",11F);proxyChev.Anchor=AnchorStyles.Right;proxyChev.Margin=new Padding(0,1,0,2);proxyChev.Cursor=Cursors.Hand;
         EventHandler openProxy=(sender,e)=>pages.SelectedIndex=1;
         proxyHeader.Click+=openProxy;proxyIcon.Click+=openProxy;edit.Click+=openProxy;proxyBadge.Click+=openProxy;proxyChev.Click+=openProxy;
         proxyHeader.Controls.Add(proxyIcon,0,0);proxyHeader.Controls.Add(edit,1,0);proxyHeader.Controls.Add(proxyBadge,2,0);proxyHeader.Controls.Add(proxyChev,3,0);
@@ -557,13 +553,14 @@ sealed class GuardWindow : Form {
         activityCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));activityCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));activityCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         var actIcon=new Glyph(Mark.Arrows,muted);actIcon.Size=new Size(18,18);actIcon.Margin=new Padding(0,3,8,0);
         var actTitle=Copy("Активные подключения",true);actTitle.Margin=new Padding(0,2,4,2);actTitle.Cursor=Cursors.Hand;
-        var actChev=Copy("›",false);actChev.Font=new Font("Segoe UI",11F);actChev.Margin=new Padding(0,0,0,0);actChev.Cursor=Cursors.Hand;
+        var actChev=Copy("›",false);actChev.Font=new Font("Segoe UI",11F);actChev.Anchor=AnchorStyles.Right;actChev.Margin=new Padding(0,1,0,2);actChev.Cursor=Cursors.Hand;
         activityCard.Click+=openFlows;actIcon.Click+=openFlows;actTitle.Click+=openFlows;actChev.Click+=openFlows;
         activityCard.Controls.Add(actIcon,0,0);activityCard.Controls.Add(actTitle,1,0);activityCard.Controls.Add(actChev,2,0);
         home.Controls.Add(activityCard);
         var vectraCard=Card();vectraCard.Padding=new Padding(14,9,14,9);vectraCard.BackColor=Color.FromArgb(20,30,46);vectraCard.BorderColor=Color.FromArgb(38,60,92);vectraCard.ColumnCount=3;vectraCard.ColumnStyles.Clear();
         vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        vectraCard.Controls.Add(new Glyph(Mark.Bolt,Color.FromArgb(56,152,255)),0,0);
+        var vectraGlyph=new Glyph(Mark.Bolt,Color.FromArgb(56,152,255));vectraGlyph.Size=new Size(22,22);vectraGlyph.Anchor=AnchorStyles.None;vectraGlyph.Margin=new Padding(0,0,10,0);
+        vectraCard.Controls.Add(vectraGlyph,0,0);
         var vectraTitle=Copy("Vectra Connect",true);vectraTitle.Margin=new Padding(0,0,4,1);
         var vectraSub=Copy("Лучший VPN-сервис для быстрой и стабильной работы",false);vectraSub.Margin=new Padding(0,0,4,0);
         var vectraText=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
@@ -623,10 +620,12 @@ sealed class GuardWindow : Form {
         optionalRoutes=Card();settings.Controls.Add(optionalRoutes);
         for(int i=1;i<4;i++){optionalRoutes.Controls.Add(Copy(names[i],true));ProxyInputs(optionalRoutes,i);}
         optionalRoutes.Controls.Add(allowMismatch);optionalRoutes.Visible=false;
+        var appSettings=Page("Настройки");
+        var appSettingsTitle=Copy("Настройки",true);appSettingsTitle.Font=new Font("Segoe UI Semibold",14.5F);appSettingsTitle.Margin=new Padding(2,2,2,6);appSettings.Controls.Add(appSettingsTitle);
         dns.Text="Убрать прежнее правило доменов";dns.AutoSize=true;
         dns.Visible=!smoke && DomainRulesPresent() && !File.Exists(ownedDomains);
         dns.Click+=(sender,e)=>{try{SetDomains(false);dns.Visible=false;}catch{State("Windows не сняла правило доменов.",false);}};
-        settings.Controls.Add(dns);
+        appSettings.Controls.Add(dns);
         var patchCard=Card();patchCard.ColumnCount=2;patchCard.ColumnStyles.Clear();
         patchCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));patchCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         var patchLeft=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
@@ -641,7 +640,7 @@ sealed class GuardWindow : Form {
         patchButton.Anchor=AnchorStyles.Right;patchButton.Enabled=false;
         patchButton.Click+=(sender,e)=>{if(!patchBusy)RunAntigravity(patchButton.Text=="Восстановить"?"restore":"patch");};
         patchCard.Controls.Add(patchButton,1,0);
-        settings.Controls.Add(patchCard);
+        appSettings.Controls.Add(patchCard);
         var updateCard=Card();updateCard.ColumnCount=2;updateCard.ColumnStyles.Clear();
         updateCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));updateCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         var updateLeft=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
@@ -653,10 +652,13 @@ sealed class GuardWindow : Form {
         updateButton=ActionButton("Проверить",(sender,e)=>RunAppUpdate(String.IsNullOrEmpty(availableVersion)?"check":"install"));
         updateButton.Anchor=AnchorStyles.Right;
         updateCard.Controls.Add(updateButton,1,0);
-        settings.Controls.Add(updateCard);
+        appSettings.Controls.Add(updateCard);
+        var quitBtn=ActionButton("Завершить AI Exit Guard",(s,e)=>{quitting=true;Close();});
+        quitBtn.Margin=new Padding(0,8,0,0);
+        appSettings.Controls.Add(quitBtn);
         LoadSavedProxies();
         Shown+=(sender,e)=>{if(!smokeMode)RunAppUpdate("check");};
-        pages.SelectedIndexChanged+=(sender,e)=>{if(pages.SelectedIndex==1 && !patchBusy)RunAntigravity("status");};
+        pages.SelectedIndexChanged+=(sender,e)=>{if(pages.SelectedIndex==3 && !patchBusy)RunAntigravity("status");};
         ShowIdle("Выключен");
         tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWindow();};
         var menu=new ContextMenuStrip();menu.Items.Add("Открыть",null,(s,e)=>ShowWindow());
@@ -1156,6 +1158,8 @@ sealed class GuardWindow : Form {
         pages.SelectedIndex=2;
         connections.Update(new[]{new ConnectionPane.Flow{Domain="api.openai.com",Status="active"},new ConnectionPane.Flow{Domain="api.anthropic.com",Status="blocked",At=DateTimeOffset.UtcNow.ToUnixTimeSeconds()}},true);
         pages.SelectedTab.PerformLayout();SaveSmokeImage("05-connections.png");
+        pages.SelectedIndex=3;
+        pages.SelectedTab.PerformLayout();SaveSmokeImage("08-app-settings.png");
         pages.SelectedIndex=0;
         leases=json.Deserialize<Dictionary<string,Reading>>("{\"Antigravity\":{\"Until\":0,\"Reason\":\"Google: NL, IPinfo: DE\"},\"Claude\":{\"Until\":201}}");
         RenderReadings(200);
