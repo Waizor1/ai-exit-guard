@@ -177,8 +177,9 @@ func antigravityPELocate() (string, error) {
 }
 
 func antigravityPEVersion(binary string) string {
-	app := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(binary))))
-	for _, name := range []string{"package.json", filepath.Join("app", "package.json")} {
+	// <app>\resources\bin\language_server.exe
+	app := filepath.Dir(filepath.Dir(filepath.Dir(binary)))
+	for _, name := range []string{filepath.Join("app", "package.json"), "package.json"} {
 		data, err := os.ReadFile(filepath.Join(app, "resources", name))
 		if err != nil {
 			continue
@@ -244,7 +245,7 @@ func antigravityPERun(action string) antigravityReport {
 		copy(patched, data)
 		copy(patched[offset:], managerPEGate.patched)
 		if err := antigravityWriteFile(binary, patched); err != nil {
-			report.Detail = "Не удалось записать файл: " + err.Error()
+			report.Detail = antigravityPEWriteHint(err)
 			break
 		}
 		check, err := os.ReadFile(binary)
@@ -276,7 +277,7 @@ func antigravityPERun(action string) antigravityReport {
 			break
 		}
 		if err := antigravityWriteFile(binary, original); err != nil {
-			report.Detail = "Не удалось восстановить файл: " + err.Error()
+			report.Detail = antigravityPEWriteHint(err)
 			break
 		}
 		report.State = "unpatched"
@@ -321,4 +322,16 @@ func antigravityWriteFile(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+// antigravityPEWriteHint turns raw Windows file errors into an instruction.
+func antigravityPEWriteHint(err error) string {
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "being used by another process"), strings.Contains(text, "sharing violation"):
+		return "Закройте Antigravity и повторите: файл занят запущенным приложением."
+	case strings.Contains(text, "access is denied"), strings.Contains(text, "permission denied"):
+		return "Нет прав на запись: запустите AI Exit Guard от имени администратора."
+	}
+	return "Не удалось записать language_server.exe: " + err.Error()
 }
