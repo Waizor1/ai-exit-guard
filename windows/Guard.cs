@@ -134,10 +134,14 @@ sealed class GuardWindow : Form {
         path.AddArc(x+w-d,y+h-d,d,d,0,90);path.AddArc(x,y+h-d,d,d,90,90);path.CloseFigure();
         return path;
     }
+    static Color EffectiveBackColor(Control control,Color fallback){
+        for(var p=control;p!=null;p=p.Parent)if(p.BackColor.A>0)return p.BackColor;
+        return fallback;
+    }
     static void PaintSurface(Control control,Graphics g,Color fill,Color border,int radius){
         int w=control.Width-1,h=control.Height-1;
         if(w<1 || h<1)return;
-        g.Clear(control.Parent==null?fill:control.Parent.BackColor);
+        g.Clear(EffectiveBackColor(control.Parent,fill));
         g.SmoothingMode=SmoothingMode.AntiAlias;
         using(var path=RoundRect(0,0,w,h,radius)){
             using(var brush=new SolidBrush(fill))g.FillPath(brush,path);
@@ -159,7 +163,7 @@ sealed class GuardWindow : Form {
             SetStyle(ControlStyles.OptimizedDoubleBuffer|ControlStyles.AllPaintingInWmPaint|ControlStyles.UserPaint,true);
         }
         protected override void OnPaint(PaintEventArgs e){
-            e.Graphics.Clear(Parent==null?BackColor:Parent.BackColor);
+            e.Graphics.Clear(EffectiveBackColor(Parent,BackColor));
             Graphics g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;
             float scale=Math.Min(ClientSize.Width,ClientSize.Height)/24f;g.ScaleTransform(scale,scale);
             using(var pen=new Pen(ForeColor,1.8f){StartCap=LineCap.Round,EndCap=LineCap.Round,LineJoin=LineJoin.Round})
@@ -228,7 +232,7 @@ sealed class GuardWindow : Form {
             return new Size(sz.Width+26,Math.Max(22,sz.Height+4));
         }
         protected override void OnPaint(PaintEventArgs e){
-            Color bg=Parent==null?Color.FromArgb(31,33,39):Parent.BackColor;
+            Color bg=EffectiveBackColor(Parent,Color.FromArgb(31,33,39));
             e.Graphics.Clear(bg);
             e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
             int box=15,y=(Height-box)/2;
