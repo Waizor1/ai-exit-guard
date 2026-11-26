@@ -3,18 +3,80 @@ on:
   push:
     branches: [main, 'feat/**', 'feature/**', 'fix/**']
   workflow_dispatch:
+    inputs:
+      run_macos:
+        description: 'Run macOS 15 full build and test suite (10x GitHub minutes)'
+        type: boolean
+        default: true
+      run_windows:
+        description: 'Run Windows x64 build, GUI smoke, and filter tests'
+        type: boolean
+        default: true
+
 concurrency:
   group: guard-${{ github.ref }}
   cancel-in-progress: true
+
 permissions:
   contents: read
+
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2022, macos-15]
-    runs-on: ${{ matrix.os }}
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.detect.outputs.go }}
+      windows: ${{ steps.detect.outputs.windows }}
+      macos: ${{ steps.detect.outputs.macos }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: detect
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            echo "windows=${{ inputs.run_windows }}" >> "$GITHUB_OUTPUT"
+            echo "macos=${{ inputs.run_macos }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "all")
+          echo "Changed files:"
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '(^all$|\.go$|^go\.mod$|^go\.sum$)'; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$CHANGED" | grep -qE '(^all$|^windows/|\.go$|^go\.mod$|^go\.sum$|^Info\.plist$|^\.github/workflows/guard\.yml$)'; then
+            echo "windows=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "windows=false" >> "$GITHUB_OUTPUT"
+          fi
+          # macOS runner costs 10x GitHub Actions minutes and is built/verified
+          # locally on Mac; run it on CI only via manual workflow_dispatch.
+          echo "macos=false" >> "$GITHUB_OUTPUT"
+
+  go-checks:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: |
+          go vet ./...
+          GOOS=windows go vet ./...
+          GOOS=darwin go vet ./...
+          go test -count=1 ./...
+
+  windows:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -23,30 +85,38 @@ jobs:
           cache: false
       - run: go vet ./...
       - run: go test -count=1 ./...
-      - if: runner.os == 'Windows'
-        shell: powershell
+      - shell: powershell
         run: |
           ./windows/build.ps1
           $env:GUARD_UI_SCREENSHOTS = "$env:RUNNER_TEMP/guard-ui"
           ./windows/smoke.ps1
-      - if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Guard-Windows-screenshots
           path: ${{ runner.temp }}/guard-ui/*.png
           if-no-files-found: error
-      - if: runner.os == 'Windows'
-        shell: powershell
+      - shell: powershell
         run: |
           ./windows/filter-smoke.ps1
           Compress-Archive -Path 'dist/windows-x64/*' -DestinationPath 'dist/AI-Exit-Guard-Windows-x64.zip'
-      - if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Guard-Windows-x64
           path: dist/AI-Exit-Guard-Windows-x64.zip
-      - if: runner.os == 'macOS'
-        run: |
+
+  macos:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - run: |
           python3 tests/check_mcp_dns_worker.py
           python3 packaging/helper/test_dns_lease.py
           python3 packaging/helper/test_dns_native.py
