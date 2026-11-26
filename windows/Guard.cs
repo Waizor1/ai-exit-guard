@@ -74,15 +74,57 @@ sealed class GuardWindow : Form {
     readonly List<SavedProxyItem> savedProxies=new List<SavedProxyItem>();
     RoundedCard savedProxiesCard;
     TableLayoutPanel savedProxiesList;
-    ComboBox buyCountryBox;
+    CountryPicker buyCountryBox;
     Button routeOptions;
     RoundedCard optionalRoutes;
     readonly Label proxyBadge=new Label{AutoSize=true};
     readonly Label verdict=new Label{AutoSize=true,Dock=DockStyle.Fill};
+    Glyph verdictGlyph;
     RoundedCard summary;
     Button ActionButton(string title, EventHandler click) {
-        var button=new SoftButton{Text=title,AutoSize=true,FlatStyle=FlatStyle.Flat,ForeColor=ink,BackColor=btnFill,BorderColor=btnBorder,Padding=new Padding(10,5,10,5)};
+        var button=new SoftButton{Text=title,AutoSize=true,FlatStyle=FlatStyle.Flat,ForeColor=ink,BackColor=btnFill,BorderColor=btnBorder,Padding=new Padding(11,4,11,4)};
+        button.MinimumSize=new Size(0,30);
         button.Cursor=Cursors.Hand;button.FlatAppearance.BorderSize=0;button.Click+=click;return button;
+    }
+    sealed class DarkMenuTable : ProfessionalColorTable {
+        public override Color ToolStripDropDownBackground { get { return Color.FromArgb(26,28,34); } }
+        public override Color MenuBorder { get { return Color.FromArgb(48,52,64); } }
+        public override Color MenuItemBorder { get { return Color.FromArgb(10,132,255); } }
+        public override Color MenuItemSelected { get { return Color.FromArgb(10,132,255); } }
+        public override Color ImageMarginGradientBegin { get { return Color.FromArgb(26,28,34); } }
+        public override Color ImageMarginGradientMiddle { get { return Color.FromArgb(26,28,34); } }
+        public override Color ImageMarginGradientEnd { get { return Color.FromArgb(26,28,34); } }
+    }
+    static ContextMenuStrip DarkMenu() {
+        var m=new ContextMenuStrip{BackColor=Color.FromArgb(26,28,34),ForeColor=Color.FromArgb(242,244,248),ShowImageMargin=false};
+        m.Renderer=new ToolStripProfessionalRenderer(new DarkMenuTable());
+        return m;
+    }
+    sealed class CountryPicker : SoftButton {
+        readonly ContextMenuStrip menu=DarkMenu();
+        public string SelectedCountry { get { return Text; } }
+        public CountryPicker(string[] items){
+            BackColor=Color.FromArgb(19,20,24);ForeColor=Color.FromArgb(242,244,248);
+            BorderColor=Color.FromArgb(50,54,66);TextAlign=ContentAlignment.MiddleLeft;
+            FlatStyle=FlatStyle.Flat;FlatAppearance.BorderSize=0;Cursor=Cursors.Hand;
+            Padding=new Padding(11,4,28,4);MinimumSize=new Size(0,32);Height=32;
+            foreach(string item in items){
+                string label=item;
+                var mi=new ToolStripMenuItem(label){ForeColor=Color.FromArgb(242,244,248)};
+                mi.Click+=(s,e)=>{Text=label;Invalidate();};
+                menu.Items.Add(mi);
+            }
+            if(items.Length>0)Text=items[0];
+            Click+=(s,e)=>menu.Show(this,0,Height+2);
+            Disposed+=(s,e)=>menu.Dispose();
+        }
+        protected override void OnPaint(PaintEventArgs e){
+            base.OnPaint(e);
+            int cx=Width-15,cy=Height/2;
+            e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            using(var pen=new Pen(Color.FromArgb(148,154,176),1.6f){StartCap=LineCap.Round,EndCap=LineCap.Round,LineJoin=LineJoin.Round})
+                e.Graphics.DrawLines(pen,new[]{new Point(cx-4,cy-2),new Point(cx,cy+2),new Point(cx+4,cy-2)});
+        }
     }
     static GraphicsPath RoundRect(int x,int y,int w,int h,int radius){
         var path=new GraphicsPath();
@@ -108,32 +150,50 @@ sealed class GuardWindow : Form {
         public RoundedCard(){DoubleBuffered=true;}
         protected override void OnPaintBackground(PaintEventArgs e){PaintSurface(this,e.Graphics,BackColor,BorderColor,Radius);}
     }
-    enum Mark { Shield, Sun, Chat, Stars, Bolt }
+    enum Mark { Shield, Sun, Chat, Stars, Bolt, Globe, Arrows, CheckCircle, Warn }
     sealed class Glyph : Control {
-        readonly Mark mark;
+        public Mark CurrentMark;
         public Glyph(Mark mark,Color color){
-            this.mark=mark;ForeColor=color;Size=new Size(22,22);Margin=new Padding(2,5,8,0);
+            CurrentMark=mark;ForeColor=color;Size=new Size(20,20);Margin=new Padding(0,4,8,0);
             TabStop=false;AccessibleRole=AccessibleRole.None;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer|ControlStyles.AllPaintingInWmPaint|ControlStyles.UserPaint,true);
         }
         protected override void OnPaint(PaintEventArgs e){
-            base.OnPaint(e);
+            e.Graphics.Clear(Parent==null?BackColor:Parent.BackColor);
             Graphics g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;
             float scale=Math.Min(ClientSize.Width,ClientSize.Height)/24f;g.ScaleTransform(scale,scale);
-            using(var pen=new Pen(ForeColor,1.8f))
+            using(var pen=new Pen(ForeColor,1.8f){StartCap=LineCap.Round,EndCap=LineCap.Round,LineJoin=LineJoin.Round})
             using(var brush=new SolidBrush(ForeColor)){
-                if(mark==Mark.Shield){
+                if(CurrentMark==Mark.Shield){
                     g.DrawPolygon(pen,new[]{new Point(12,2),new Point(21,6),new Point(20,14),new Point(17,18),new Point(12,22),new Point(7,18),new Point(4,14),new Point(3,6)});
                     g.DrawLines(pen,new[]{new Point(7,11),new Point(11,15),new Point(17,8)});
-                }else if(mark==Mark.Bolt){
+                }else if(CurrentMark==Mark.CheckCircle){
+                    g.FillEllipse(brush,2,2,20,20);
+                    using(var chk=new Pen(Color.FromArgb(18,30,22),2.3f){StartCap=LineCap.Round,EndCap=LineCap.Round,LineJoin=LineJoin.Round})
+                        g.DrawLines(chk,new[]{new PointF(7.5f,12.2f),new PointF(10.6f,15.3f),new PointF(16.6f,9.0f)});
+                }else if(CurrentMark==Mark.Warn){
+                    g.FillPolygon(brush,new[]{new PointF(12,2.5f),new PointF(22,20.5f),new PointF(2,20.5f)});
+                    using(var ex=new Pen(Color.FromArgb(30,24,14),2.1f){StartCap=LineCap.Round})
+                        g.DrawLine(ex,12,9,12,14.5f);
+                    using(var dot=new SolidBrush(Color.FromArgb(30,24,14)))
+                        g.FillEllipse(dot,10.8f,16.5f,2.4f,2.4f);
+                }else if(CurrentMark==Mark.Bolt){
                     g.DrawPolygon(pen,new[]{new Point(12,2),new Point(21,6),new Point(20,14),new Point(17,18),new Point(12,22),new Point(7,18),new Point(4,14),new Point(3,6)});
                     g.FillPolygon(brush,new[]{new Point(13,6),new Point(8,13),new Point(12,13),new Point(11,18),new Point(16,11),new Point(12,11)});
-                }else if(mark==Mark.Sun){
+                }else if(CurrentMark==Mark.Globe){
+                    g.DrawEllipse(pen,3,3,18,18);
+                    g.DrawEllipse(pen,8,3,8,18);
+                    g.DrawLine(pen,3,12,21,12);
+                }else if(CurrentMark==Mark.Arrows){
+                    g.DrawLine(pen,5,9,19,9);g.DrawLines(pen,new[]{new Point(15,5),new Point(19,9),new Point(15,13)});
+                    g.DrawLine(pen,19,15,5,15);g.DrawLines(pen,new[]{new Point(9,11),new Point(5,15),new Point(9,19)});
+                }else if(CurrentMark==Mark.Sun){
                     g.FillEllipse(brush,7,7,10,10);
                     for(int i=0;i<8;i++){
                         double a=i*Math.PI/4;float x=(float)Math.Cos(a),y=(float)Math.Sin(a);
                         g.DrawLine(pen,12+7*x,12+7*y,12+10*x,12+10*y);
                     }
-                }else if(mark==Mark.Chat){
+                }else if(CurrentMark==Mark.Chat){
                     g.DrawEllipse(pen,2,3,15,11);g.DrawLine(pen,6,13,4,17);
                     g.FillEllipse(brush,8,9,14,10);
                     g.FillPolygon(brush,new[]{new Point(15,17),new Point(21,21),new Point(20,16)});
@@ -144,16 +204,17 @@ sealed class GuardWindow : Form {
             }
         }
     }
-    sealed class SoftButton : Button {
+    class SoftButton : Button {
         public Color BorderColor=Color.Transparent;
         public SoftButton(){DoubleBuffered=true;}
         protected override void OnPaint(PaintEventArgs e){
             bool hover=Enabled && ClientRectangle.Contains(PointToClient(MousePosition));
-            Color fill=Enabled?BackColor:Color.FromArgb(37,39,46);
-            Color border=Enabled?BorderColor:Color.FromArgb(50,53,63);
-            PaintSurface(this,e.Graphics,hover?ControlPaint.Light(fill,.14f):fill,border,8);
+            Color fill=Enabled?BackColor:Color.FromArgb(30,32,39);
+            Color border=Enabled?BorderColor:Color.FromArgb(42,45,55);
+            PaintSurface(this,e.Graphics,hover?ControlPaint.Light(fill,.14f):fill,border,7);
             var alignment=TextAlign==ContentAlignment.MiddleLeft?TextFormatFlags.Left:TextFormatFlags.HorizontalCenter;
-            TextRenderer.DrawText(e.Graphics,Text,Font,Rectangle.Inflate(ClientRectangle,-Padding.Left,0),Enabled?ForeColor:Color.FromArgb(108,114,128),alignment|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
+            var rect=new Rectangle(Padding.Left,0,Math.Max(0,Width-Padding.Left-Padding.Right),Height);
+            TextRenderer.DrawText(e.Graphics,Text,Font,rect,Enabled?ForeColor:Color.FromArgb(95,101,119),alignment|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis|TextFormatFlags.NoPadding);
             if(Focused && ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-4,-4),ForeColor,BackColor);
         }
     }
@@ -184,41 +245,6 @@ sealed class GuardWindow : Form {
             }
             var textRect=new Rectangle(23,0,Math.Max(0,Width-23),Height);
             TextRenderer.DrawText(e.Graphics,Text,Font,textRect,Enabled?ForeColor:Color.FromArgb(108,114,128),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
-        }
-    }
-    sealed class DarkComboBox : ComboBox {
-        public DarkComboBox(){
-            DropDownStyle=ComboBoxStyle.DropDownList;DrawMode=DrawMode.OwnerDrawFixed;
-            FlatStyle=FlatStyle.Flat;BackColor=Color.FromArgb(19,20,24);ForeColor=Color.FromArgb(242,244,248);
-            ItemHeight=24;
-        }
-        protected override void OnDrawItem(DrawItemEventArgs e){
-            if(e.Index<0)return;
-            bool selected=(e.State & DrawItemState.Selected)!=0;
-            Color bg=selected?Color.FromArgb(10,132,255):Color.FromArgb(26,28,34);
-            using(var brush=new SolidBrush(bg))e.Graphics.FillRectangle(brush,e.Bounds);
-            string text=GetItemText(Items[e.Index]);
-            TextRenderer.DrawText(e.Graphics,text,Font,new Rectangle(e.Bounds.X+8,e.Bounds.Y,e.Bounds.Width-12,e.Bounds.Height),Color.FromArgb(242,244,248),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
-        }
-        protected override void WndProc(ref Message m){
-            base.WndProc(ref m);
-            if(m.Msg==0x000F){
-                using(var g=CreateGraphics()){
-                    g.SmoothingMode=SmoothingMode.AntiAlias;
-                    var r=new Rectangle(0,0,Width-1,Height-1);
-                    Color parentBg=Parent==null?Color.FromArgb(31,33,39):Parent.BackColor;
-                    g.Clear(parentBg);
-                    using(var path=RoundRect(0,0,r.Width,r.Height,8)){
-                        using(var brush=new SolidBrush(Color.FromArgb(19,20,24)))g.FillPath(brush,path);
-                        using(var pen=new Pen(Focused?Color.FromArgb(10,132,255):Color.FromArgb(52,56,68),1f))g.DrawPath(pen,path);
-                    }
-                    string text=SelectedIndex>=0?GetItemText(Items[SelectedIndex]):"";
-                    TextRenderer.DrawText(g,text,Font,new Rectangle(10,0,Math.Max(0,Width-32),Height),Color.FromArgb(242,244,248),TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
-                    int cx=Width-18,cy=Height/2;
-                    using(var pen=new Pen(Color.FromArgb(148,154,176),1.6f){StartCap=LineCap.Round,EndCap=LineCap.Round,LineJoin=LineJoin.Round})
-                        g.DrawLines(pen,new[]{new Point(cx-4,cy-2),new Point(cx,cy+2),new Point(cx+4,cy-2)});
-                }
-            }
         }
     }
     sealed class ProtocolPicker : TableLayoutPanel {
@@ -286,11 +312,12 @@ sealed class GuardWindow : Form {
         version.AccessibleName="Версия "+version.Text;version.Margin=new Padding(2,8,2,4);
         identity.Controls.Add(version);header.Controls.Add(identity,1,0);
         if(pages.TabCount==1){
-            var settingsMenu=new ContextMenuStrip();
+            var settingsMenu=DarkMenu();
             settingsMenu.Items.Add("Прокси",null,(s,e)=>pages.SelectedIndex=1);
             settingsMenu.Items.Add("Активные подключения",null,(s,e)=>pages.SelectedIndex=2);
             settingsMenu.Items.Add("Завершить Guard",null,(s,e)=>{quitting=true;Close();});
-            header.Controls.Add(ActionButton("Настройки",(sender,e)=>{var button=(Button)sender;settingsMenu.Show(button,0,button.Height);}),2,0);
+            foreach(ToolStripItem mi in settingsMenu.Items)mi.ForeColor=ink;
+            header.Controls.Add(ActionButton("Настройки",(sender,e)=>{var button=(Button)sender;settingsMenu.Show(button,0,button.Height+2);}),2,0);
             Disposed+=(s,e)=>settingsMenu.Dispose();
         }
         grid.Controls.Add(header);
@@ -454,16 +481,21 @@ sealed class GuardWindow : Form {
         captionFont=new Font("Segoe UI",8.5F);
         headingFont=new Font("Segoe UI Semibold",10F);
         AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
-        ClientSize=new Size(460,Math.Min(740,Screen.FromControl(this).WorkingArea.Height-60));MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
+        ClientSize=new Size(450,Math.Min(760,Screen.FromControl(this).WorkingArea.Height-48));MinimumSize=new Size(390,440);BackColor=surface;ForeColor=ink;
         pages.Appearance=TabAppearance.FlatButtons;pages.SizeMode=TabSizeMode.Fixed;pages.ItemSize=new Size(0,1);pages.TabStop=false;
         Controls.Add(pages);
         var home=Page("Главная");var settings=Page("Настройки");
-        summary=Card();
-        verdict.Font=new Font("Segoe UI Semibold",17F);verdict.Margin=new Padding(2,4,2,2);summary.Controls.Add(verdict);
-        status.AccessibleName="Причина текущего состояния";status.Dock=DockStyle.Fill;status.Margin=new Padding(2,2,2,4);status.ForeColor=muted;status.Font=captionFont;summary.Controls.Add(status);home.Controls.Add(summary);
-        var results=Card();results.ColumnCount=3;results.ColumnStyles.Clear();
-        results.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,46));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,54));
-        var services=Copy("Сервисы",true);services.Font=captionFont;services.Margin=new Padding(2,0,2,6);services.ForeColor=muted;
+        summary=Card();summary.Padding=new Padding(14,11,14,11);
+        var heroRow=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=Padding.Empty,BackColor=Color.Transparent};
+        heroRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));heroRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        verdictGlyph=new Glyph(Mark.Shield,ink);verdictGlyph.Size=new Size(22,22);verdictGlyph.Margin=new Padding(0,4,9,0);
+        heroRow.Controls.Add(verdictGlyph,0,0);
+        verdict.Font=new Font("Segoe UI Semibold",15.5F);verdict.Margin=new Padding(0,0,0,2);heroRow.Controls.Add(verdict,1,0);
+        summary.Controls.Add(heroRow);
+        status.AccessibleName="Причина текущего состояния";status.Dock=DockStyle.Fill;status.Margin=new Padding(0,3,0,1);status.ForeColor=muted;status.Font=captionFont;summary.Controls.Add(status);home.Controls.Add(summary);
+        var results=Card();results.ColumnCount=3;results.ColumnStyles.Clear();results.Padding=new Padding(14,9,14,9);
+        results.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,44));results.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,56));
+        var services=Copy("Сервисы",true);services.Font=captionFont;services.Margin=new Padding(0,0,0,5);services.ForeColor=muted;
         results.Controls.Add(services,0,0);results.SetColumnSpan(services,3);
         var marks=new[]{Mark.Sun,Mark.Chat,Mark.Stars};
         var colors=new[]{Color.FromArgb(255,159,10),Color.FromArgb(48,209,176),Color.FromArgb(165,148,255)};
@@ -471,56 +503,73 @@ sealed class GuardWindow : Form {
             int row=1+3*i;
             var name=Copy(names[i+1],true);
             results.Controls.Add(new Glyph(marks[i],colors[i]),0,row);
-            name.Margin=new Padding(0,6,2,2);results.Controls.Add(name,1,row);
+            name.Margin=new Padding(0,4,2,1);results.Controls.Add(name,1,row);
             outcomes[i]=Copy("",false);outcomes[i].AccessibleName=names[i+1]+" — статус";
             outcomes[i].Font=new Font("Segoe UI Semibold",9F);
-            outcomes[i].TextAlign=ContentAlignment.MiddleRight;outcomes[i].Margin=new Padding(2,6,2,2);
+            outcomes[i].TextAlign=ContentAlignment.MiddleRight;outcomes[i].Margin=new Padding(2,4,0,1);
             results.Controls.Add(outcomes[i],2,row);
-            reasons[i]=Copy("",false);reasons[i].Margin=new Padding(0,0,2,6);
+            reasons[i]=Copy("",false);reasons[i].Margin=new Padding(0,0,0,5);
             results.Controls.Add(reasons[i],1,row+1);results.SetColumnSpan(reasons[i],2);
             if(i<2){
-                var divider=new Panel{Height=1,Dock=DockStyle.Top,Margin=new Padding(2,2,2,2),BackColor=cardBorder};
+                var divider=new Panel{Height=1,Dock=DockStyle.Top,Margin=new Padding(0,1,0,2),BackColor=cardBorder};
                 results.Controls.Add(divider,0,row+2);results.SetColumnSpan(divider,3);
             }
         }
         home.Controls.Add(results);
-        var proxyCard=Card();proxyCard.ColumnCount=2;proxyCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var edit=ActionButton("Добавить прокси", (sender,e)=>pages.SelectedIndex=1);edit.TextAlign=ContentAlignment.MiddleLeft;edit.Font=headingFont;
-        proxyCard.Controls.Add(edit,0,0);proxyBadge.ForeColor=muted;proxyBadge.Font=captionFont;proxyBadge.Anchor=AnchorStyles.Right;
-        proxyCard.Controls.Add(proxyBadge,1,0);
-        protection.ForeColor=ink;protection.BackColor=card;protection.Font=headingFont;proxyCard.Controls.Add(protection,0,1);proxyCard.SetColumnSpan(protection,2);
-        modeHint.ForeColor=muted;modeHint.Font=captionFont;modeHint.Margin=new Padding(4,0,2,4);
-        proxyCard.Controls.Add(modeHint,0,2);proxyCard.SetColumnSpan(modeHint,2);home.Controls.Add(proxyCard);
+        var proxyCard=Card();proxyCard.Padding=new Padding(14,9,14,9);
+        var proxyHeader=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=4,Margin=new Padding(0,0,0,4),Cursor=Cursors.Hand,BackColor=Color.Transparent};
+        proxyHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        proxyHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        proxyHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        proxyHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var proxyIcon=new Glyph(Mark.Globe,muted);proxyIcon.Size=new Size(18,18);proxyIcon.Margin=new Padding(0,3,8,0);
+        var edit=Copy("Добавить прокси",true);edit.Margin=new Padding(0,2,4,2);edit.Cursor=Cursors.Hand;
+        proxyBadge.ForeColor=muted;proxyBadge.Font=captionFont;proxyBadge.Margin=new Padding(4,3,4,2);proxyBadge.Cursor=Cursors.Hand;
+        var proxyChev=Copy("›",false);proxyChev.Font=new Font("Segoe UI",11F);proxyChev.Margin=new Padding(0,0,0,0);proxyChev.Cursor=Cursors.Hand;
+        EventHandler openProxy=(sender,e)=>pages.SelectedIndex=1;
+        proxyHeader.Click+=openProxy;proxyIcon.Click+=openProxy;edit.Click+=openProxy;proxyBadge.Click+=openProxy;proxyChev.Click+=openProxy;
+        proxyHeader.Controls.Add(proxyIcon,0,0);proxyHeader.Controls.Add(edit,1,0);proxyHeader.Controls.Add(proxyBadge,2,0);proxyHeader.Controls.Add(proxyChev,3,0);
+        proxyCard.Controls.Add(proxyHeader);
+        proxyCard.Controls.Add(new Panel{Height=1,Dock=DockStyle.Top,Margin=new Padding(0,2,0,4),BackColor=cardBorder});
+        protection.ForeColor=ink;protection.BackColor=card;protection.Font=headingFont;protection.Margin=new Padding(0,0,0,0);proxyCard.Controls.Add(protection);
+        modeHint.ForeColor=muted;modeHint.Font=captionFont;modeHint.Margin=new Padding(0,0,0,2);
+        proxyCard.Controls.Add(modeHint);home.Controls.Add(proxyCard);
         protection.CheckedChanged+=(sender,e)=>{
             UpdateModeHint();
             if(relayReady){Stop();Connect();}
         };
         UpdateModeHint();
-        start.Text="Подключить прокси";start.AutoSize=true;start.Padding=new Padding(14,6,14,6);start.Margin=new Padding(0,8,0,4);
+        start.Text="Подключить прокси";start.AutoSize=true;start.Padding=new Padding(14,5,14,5);start.MinimumSize=new Size(0,32);start.Margin=new Padding(0,6,0,4);
         start.BackColor=accent;start.ForeColor=Color.White;start.Font=headingFont;start.FlatStyle=FlatStyle.Flat;start.FlatAppearance.BorderSize=0;
         start.Click+=(s,e)=>{
             if(relay!=null || retrying){Disconnect();if(relay!=null)pages.SelectedIndex=0;return;}
             Connect();
         };
         var activity=Page("Подключения");
-        var connectionsTitle=Copy("Активные подключения",true);connectionsTitle.Font=new Font("Segoe UI Semibold",15F);activity.Controls.Add(connectionsTitle);
+        var connectionsTitle=Copy("Активные подключения",true);connectionsTitle.Font=new Font("Segoe UI Semibold",14.5F);activity.Controls.Add(connectionsTitle);
         var feed=Card();activity.Controls.Add(feed);connections=new ConnectionPane(feed,card,ink);
         EventHandler openFlows=(s,e)=>{pages.SelectedIndex=2;nextFlows=DateTime.MinValue;};
-        var activityLink=ActionButton("Активные подключения   ›",openFlows);activityLink.Dock=DockStyle.Fill;
-        activityLink.BackColor=card;((SoftButton)activityLink).BorderColor=cardBorder;activityLink.Padding=new Padding(14,10,14,10);activityLink.Margin=new Padding(0,4,0,4);
-        activityLink.TextAlign=ContentAlignment.MiddleLeft;activityLink.Font=headingFont;home.Controls.Add(activityLink);
-        var actions=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,4,0,2)};
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        lastResult.ForeColor=muted;lastResult.Font=captionFont;actions.Controls.Add(lastResult,0,0);
-        checkAddress.Text="Проверить адрес";checkAddress.AutoSize=true;checkAddress.FlatStyle=FlatStyle.Flat;
-        checkAddress.BackColor=accent;checkAddress.ForeColor=Color.White;checkAddress.Font=headingFont;checkAddress.FlatAppearance.BorderSize=0;checkAddress.Padding=new Padding(12,6,12,6);
-        checkAddress.Margin=new Padding(6,4,0,4);checkAddress.Enabled=false;
-        checkAddress.Click+=(sender,e)=>{
-            if(!relayReady || !checkAddress.Enabled)return;
-            try{relay.StandardInput.WriteLine("check");relay.StandardInput.Flush();checkAddress.Enabled=false;checkAddress.Text="Проверяем…";}
-            catch(IOException){RelayEnded();}
-        };
-        actions.Controls.Add(checkAddress,1,0);home.Controls.Add(actions);
+        var activityCard=Card();activityCard.Padding=new Padding(14,8,14,8);activityCard.ColumnCount=3;activityCard.ColumnStyles.Clear();activityCard.Cursor=Cursors.Hand;
+        activityCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));activityCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));activityCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var actIcon=new Glyph(Mark.Arrows,muted);actIcon.Size=new Size(18,18);actIcon.Margin=new Padding(0,3,8,0);
+        var actTitle=Copy("Активные подключения",true);actTitle.Margin=new Padding(0,2,4,2);actTitle.Cursor=Cursors.Hand;
+        var actChev=Copy("›",false);actChev.Font=new Font("Segoe UI",11F);actChev.Margin=new Padding(0,0,0,0);actChev.Cursor=Cursors.Hand;
+        activityCard.Click+=openFlows;actIcon.Click+=openFlows;actTitle.Click+=openFlows;actChev.Click+=openFlows;
+        activityCard.Controls.Add(actIcon,0,0);activityCard.Controls.Add(actTitle,1,0);activityCard.Controls.Add(actChev,2,0);
+        home.Controls.Add(activityCard);
+        var vectraCard=Card();vectraCard.Padding=new Padding(14,9,14,9);vectraCard.BackColor=Color.FromArgb(20,30,46);vectraCard.BorderColor=Color.FromArgb(38,60,92);vectraCard.ColumnCount=3;vectraCard.ColumnStyles.Clear();
+        vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        vectraCard.Controls.Add(new Glyph(Mark.Bolt,Color.FromArgb(56,152,255)),0,0);
+        var vectraTitle=Copy("Vectra Connect",true);vectraTitle.Margin=new Padding(0,0,4,1);
+        var vectraSub=Copy("Лучший VPN-сервис для быстрой и стабильной работы",false);vectraSub.Margin=new Padding(0,0,4,0);
+        var vectraText=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
+        vectraText.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        vectraText.Controls.Add(vectraTitle);vectraText.Controls.Add(vectraSub);
+        vectraCard.Controls.Add(vectraText,1,0);
+        var vectraOpen=ActionButton("Открыть",(sender,e)=>{try{Process.Start(new ProcessStartInfo("https://pay.vectra-pro.net/store"){UseShellExecute=true});}catch{}});
+        vectraOpen.BackColor=Color.FromArgb(34,52,78);((SoftButton)vectraOpen).BorderColor=Color.FromArgb(58,86,128);vectraOpen.Anchor=AnchorStyles.Right;
+        vectraCard.Controls.Add(vectraOpen,2,0);
+        home.Controls.Add(vectraCard);
         updateBanner=Card();updateBanner.BackColor=Color.FromArgb(23,36,56);updateBanner.BorderColor=Color.FromArgb(40,68,108);updateBanner.ColumnCount=2;updateBanner.ColumnStyles.Clear();
         updateBanner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));updateBanner.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         updateBannerText=Copy("Доступно обновление",true);updateBannerText.Margin=new Padding(2,4,6,4);
@@ -529,20 +578,19 @@ sealed class GuardWindow : Form {
         updateBannerButton.BackColor=accent;updateBannerButton.ForeColor=Color.White;((SoftButton)updateBannerButton).BorderColor=Color.Transparent;
         updateBanner.Controls.Add(updateBannerButton,1,0);
         updateBanner.Visible=false;home.Controls.Add(updateBanner);
-        var vectraCard=Card();vectraCard.BackColor=Color.FromArgb(23,34,51);vectraCard.BorderColor=Color.FromArgb(40,62,94);vectraCard.ColumnCount=3;vectraCard.ColumnStyles.Clear();
-        vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));vectraCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        vectraCard.Controls.Add(new Glyph(Mark.Bolt,Color.FromArgb(56,152,255)),0,0);
-        var vectraTitle=Copy("Vectra Connect",true);vectraTitle.Margin=new Padding(2,1,4,1);
-        var vectraSub=Copy("Лучший VPN-сервис для быстрой и стабильной работы",false);vectraSub.Margin=new Padding(2,0,4,1);
-        var vectraText=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
-        vectraText.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        vectraText.Controls.Add(vectraTitle);vectraText.Controls.Add(vectraSub);
-        vectraCard.Controls.Add(vectraText,1,0);
-        var vectraOpen=ActionButton("Открыть",(sender,e)=>{try{Process.Start(new ProcessStartInfo("https://pay.vectra-pro.net/store"){UseShellExecute=true});}catch{}});
-        vectraOpen.BackColor=Color.FromArgb(38,56,84);((SoftButton)vectraOpen).BorderColor=Color.FromArgb(62,92,136);vectraOpen.Anchor=AnchorStyles.Right;
-        vectraCard.Controls.Add(vectraOpen,2,0);
-        home.Controls.Add(vectraCard);
-        var heading=Copy("Общий прокси",true);heading.Font=new Font("Segoe UI Semibold",15F);heading.Margin=new Padding(2,4,2,6);settings.Controls.Add(heading);inputFeedback.ForeColor=Color.FromArgb(255,159,10);settings.Controls.Add(inputFeedback);ProxyInputs(settings,0);
+        var actions=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,4,0,0)};
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        lastResult.ForeColor=muted;lastResult.Font=captionFont;actions.Controls.Add(lastResult,0,0);
+        checkAddress.Text="Проверить адрес";checkAddress.AutoSize=true;checkAddress.FlatStyle=FlatStyle.Flat;
+        checkAddress.BackColor=accent;checkAddress.ForeColor=Color.White;checkAddress.Font=headingFont;checkAddress.FlatAppearance.BorderSize=0;checkAddress.Padding=new Padding(13,5,13,5);checkAddress.MinimumSize=new Size(0,32);
+        checkAddress.Margin=new Padding(6,2,0,2);checkAddress.Enabled=false;
+        checkAddress.Click+=(sender,e)=>{
+            if(!relayReady || !checkAddress.Enabled)return;
+            try{relay.StandardInput.WriteLine("check");relay.StandardInput.Flush();checkAddress.Enabled=false;checkAddress.Text="Проверяем…";}
+            catch(IOException){RelayEnded();}
+        };
+        actions.Controls.Add(checkAddress,1,0);home.Controls.Add(actions);
+        var heading=Copy("Общий прокси",true);heading.Font=new Font("Segoe UI Semibold",14.5F);heading.Margin=new Padding(2,2,2,4);settings.Controls.Add(heading);inputFeedback.ForeColor=Color.FromArgb(255,159,10);settings.Controls.Add(inputFeedback);ProxyInputs(settings,0);
         savedProxiesCard=Card();
         savedProxiesCard.Controls.Add(Copy("Сохранённые прокси",true));
         savedProxiesList=new TableLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Top,ColumnCount=1,Margin=Padding.Empty};
@@ -554,11 +602,9 @@ sealed class GuardWindow : Form {
         buyCard.Controls.Add(Copy("Купить прокси",true));
         var buyRow=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,6,0,4)};
         buyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));buyRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        buyCountryBox=new DarkComboBox{Dock=DockStyle.Fill};
-        buyCountryBox.Items.AddRange(new object[]{"Нидерланды","Германия","США","Финляндия","Великобритания","Сингапур","Япония"});
-        buyCountryBox.SelectedIndex=0;
+        buyCountryBox=new CountryPicker(new[]{"Нидерланды","Германия","США","Финляндия","Великобритания","Сингапур","Япония"}){Dock=DockStyle.Fill};
         var buyPay=ActionButton("Оплатить",(sender,e)=>{});
-        buyPay.Enabled=false;buyPay.Margin=new Padding(8,0,0,0);
+        buyPay.Enabled=false;buyPay.Margin=new Padding(8,0,0,0);buyPay.MinimumSize=new Size(92,32);
         buyRow.Controls.Add(buyCountryBox,0,0);buyRow.Controls.Add(buyPay,1,0);
         buyCard.Controls.Add(buyRow);
         buyCard.Controls.Add(Copy("Скоро: после оплаты прокси сам сохранится в список и подключится.",false));
@@ -840,6 +886,11 @@ sealed class GuardWindow : Form {
         bool danger=leases!=null && leases.Values.Any(r=>r.HighRisk && r.Until==0);
         if(routing && danger){verdict.Text="Высокий риск";verdict.ForeColor=Color.FromArgb(255,69,58);summary.BackColor=Color.FromArgb(46,26,29);summary.BorderColor=Color.FromArgb(84,43,48);}
         if(retrying && relay==null){verdict.Text="Восстанавливаем соединение";proxyBadge.Text="Переподключение";verdict.ForeColor=Color.FromArgb(255,159,10);}
+        if(verdictGlyph!=null){
+            verdictGlyph.CurrentMark=relay==null?Mark.Shield:(open && !(routing && danger))?Mark.CheckCircle:Mark.Warn;
+            verdictGlyph.ForeColor=verdict.ForeColor;
+            verdictGlyph.Invalidate();
+        }
         if(!relayReady)checkAddress.Enabled=false;
         else if(checkAddress.Text!="Проверяем…")checkAddress.Enabled=true;
         start.BackColor=relay!=null || retrying?ControlPaint.Light(card,.17f):accent;
