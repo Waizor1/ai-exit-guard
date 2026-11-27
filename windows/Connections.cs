@@ -116,6 +116,21 @@ sealed class ConnectionPane {
         }
         return matches.ToArray();
     }
+    public string NoteText { get { return note.Text; } }
+    public List<Dictionary<string,string>> SnapshotRows(){
+        var result=new List<Dictionary<string,string>>();
+        foreach(ListViewItem item in list.Items){
+            string st=item.SubItems.Count>0?item.SubItems[0].Text:"";
+            string dom=item.SubItems.Count>1?item.SubItems[1].Text:"";
+            string tm=item.SubItems.Count>2?item.SubItems[2].Text:"";
+            string tone="muted";
+            if(st=="Через Guard")tone="ok";
+            else if(st=="Ошибка прокси" || st=="Заблокировано")tone="bad";
+            else if(st=="Возможный обход")tone="warn";
+            result.Add(new Dictionary<string,string>{{"state",st},{"domain",dom},{"time",tm},{"tone",tone}});
+        }
+        return result;
+    }
     void Render(){
         var rows=new List<string[]>();
         foreach(var g in recent.Where(r=>r.Status=="active").GroupBy(r=>r.Domain))

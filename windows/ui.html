@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>AI Exit Guard</title>
+<style>
+  :root {
+    --bg: #1c1c1e;
+    --card: #262629;
+    --card-hover: #2c2c30;
+    --inset: #19191c;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --ink: #f5f5f7;
+    --muted: #98989f;
+    --dim: #6e6e73;
+    --blue: #0a84ff;
+    --blue-hover: #2492ff;
+    --green: #30d158;
+    --amber: #ff9f0a;
+    --red: #ff453a;
+    --teal: #30d1b0;
+    --indigo: #a594ff;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; }
+  input, textarea, .selectable { -webkit-user-select: text; user-select: text; }
+  html, body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.38;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.28); }
+
+  .app {
+    padding: 14px 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 28px;
+  }
+  .back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: none;
+    border: none;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 4px 6px 4px 2px;
+    margin-left: -4px;
+    border-radius: 7px;
+    transition: background 0.14s ease;
+  }
+  .back-btn:hover { background: rgba(255,255,255,0.08); }
+  .brand-icon { color: var(--muted); display: inline-flex; align-items: center; }
+  .brand-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand-ver { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 1px; }
+  .spacer { flex: 1; }
+  .icon-btn {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--ink);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,0.09); }
+  .icon-btn:active { background: rgba(255,255,255,0.14); }
+
+  /* Hero */
+  .hero { padding: 4px 2px 2px; display: flex; flex-direction: column; gap: 5px; }
+  .hero-row { display: flex; align-items: center; gap: 10px; }
+  .hero-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+  .hero-sub { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+  .hero.tone-ok .hero-icon, .hero.tone-ok .hero-title { color: var(--green); }
+  .hero.tone-warn .hero-icon, .hero.tone-warn .hero-title { color: var(--amber); }
+  .hero.tone-bad .hero-icon, .hero.tone-bad .hero-title { color: var(--red); }
+  .hero.tone-neutral .hero-icon, .hero.tone-neutral .hero-title { color: var(--ink); }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .card.compact { padding: 6px 14px; }
+  .card.vectra {
+    background: linear-gradient(135deg, rgba(24, 37, 58, 0.95), rgba(20, 29, 44, 0.95));
+    border-color: rgba(58, 120, 210, 0.28);
+  }
+  .card.update {
+    background: rgba(10, 132, 255, 0.14);
+    border-color: rgba(10, 132, 255, 0.30);
+  }
+  .card-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.01em;
+  }
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 9px 0;
+  }
+  .divider.tight { margin: 7px 0; }
+
+  /* Rows */
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 28px;
+  }
+  .row.clickable {
+    cursor: pointer;
+    border-radius: 8px;
+    margin: -4px -6px;
+    padding: 5px 6px;
+    transition: background 0.12s ease;
+  }
+  .row.clickable:hover { background: rgba(255,255,255,0.05); }
+  .row-icon { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .row-main { flex: 1; min-width: 0; }
+  .row-title { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+  .row-sub { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+  .row-right { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); flex-shrink: 0; }
+  .chev { color: var(--dim); display: inline-flex; align-items: center; }
+
+  .svc-status { font-size: 12.5px; font-weight: 500; }
+  .svc-status.ok { color: var(--green); }
+  .svc-status.warn { color: var(--amber); }
+  .svc-status.bad { color: var(--red); }
+  .svc-status.muted { color: var(--muted); }
+  .svc-reason { font-size: 11.5px; color: var(--muted); margin: 3px 0 0 30px; line-height: 1.35; }
+
+  /* Apple Switch */
+  .switch {
+    position: relative;
+    width: 42px; height: 24px;
+    border-radius: 999px;
+    background: #48484d;
+    border: none;
+    cursor: pointer;
+    transition: background 0.18s ease;
+    flex-shrink: 0;
+  }
+  .switch.on { background: var(--blue); }
+  .switch:disabled { opacity: 0.45; cursor: default; }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    transition: transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
+  }
+  .switch.on::after { transform: translateX(18px); }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: #36363a;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 13px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.13s ease, opacity 0.13s ease;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { background: #434348; }
+  .btn:active:not(:disabled) { background: #4c4c52; }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn.primary { background: var(--blue); border-color: transparent; color: #fff; }
+  .btn.primary:hover:not(:disabled) { background: var(--blue-hover); }
+  .btn.subtle { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.09); }
+  .btn.subtle:hover:not(:disabled) { background: rgba(255,255,255,0.14); }
+  .btn.full { width: 100%; padding: 8px 14px; }
+  .btn.sm { font-size: 12px; padding: 4px 10px; border-radius: 7px; }
+  .btn.danger-ghost { background: rgba(255, 69, 58, 0.12); color: #ff6961; border-color: rgba(255,69,58,0.22); }
+  .btn.danger-ghost:hover:not(:disabled) { background: rgba(255, 69, 58, 0.20); }
+
+  /* Footer */
+  .footer {
+    margin-top: auto;
+    padding-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .footer-note { font-size: 12px; color: var(--muted); }
+
+  /* Page titles */
+  .page-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; margin: 2px 0 4px; }
+  .page-sub { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; line-height: 1.4; }
+
+  /* Segmented control */
+  .seg {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    background: var(--inset);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 3px;
+    gap: 3px;
+    margin: 6px 0 10px;
+  }
+  .seg.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .seg button {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+  }
+  .seg button.active {
+    background: #3a3a3f;
+    color: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+  .seg button:disabled { opacity: 0.45; cursor: default; }
+
+  /* Inputs */
+  .field-label { font-size: 12px; color: var(--muted); margin-bottom: 5px; display: block; }
+  .input, .select {
+    width: 100%;
+    background: var(--inset);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    padding: 8px 10px;
+    outline: none;
+    transition: border-color 0.14s ease;
+  }
+  .input:focus, .select:focus { border-color: var(--blue); }
+  .input:disabled, .select:disabled { opacity: 0.5; }
+  .select option { background: #1e1e22; color: #f5f5f7; }
+
+  .check-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .check-row input[type="checkbox"] {
+    accent-color: var(--blue);
+    width: 15px; height: 15px;
+    cursor: pointer;
+  }
+
+  .btn-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  .btn-group { display: flex; align-items: center; gap: 6px; }
+
+  .feedback {
+    font-size: 12.5px;
+    color: var(--amber);
+    background: rgba(255, 159, 10, 0.10);
+    border: 1px solid rgba(255, 159, 10, 0.25);
+    border-radius: 9px;
+    padding: 8px 11px;
+  }
+  .error-text { font-size: 12px; color: var(--red); margin-top: 4px; }
+
+  /* Flows table */
+  .flow-list { display: flex; flex-direction: column; gap: 0; margin-top: 8px; }
+  .flow-row {
+    display: grid;
+    grid-template-columns: 112px 1fr 56px;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 0;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+  .flow-row.head { border-top: none; font-size: 11.5px; color: var(--muted); font-weight: 600; padding-top: 2px; }
+  .flow-domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+  .flow-time { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+
+  /* Saved proxies */
+  .saved-row { display: flex; align-items: center; gap: 6px; padding: 6px 0; }
+  .saved-row + .saved-row { border-top: 1px solid var(--border); }
+  .saved-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .badge-count {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    background: rgba(255,255,255,0.08);
+    padding: 1px 7px; border-radius: 999px;
+  }
+  .collapsible-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--ink); font: inherit; font-size: 13px; font-weight: 600;
+    padding: 8px 12px; border-radius: 10px; cursor: pointer; align-self: flex-start;
+  }
+  .collapsible-btn:hover { background: var(--card-hover); }
+  .stack-gap { display: flex; flex-direction: column; gap: 10px; }
+</style>
+</head>
+<body>
+<div id="root" class="app"></div>
+<script>
+const ICONS = {
+  shield: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.8L4.6 5.5C4.1 5.7 3.8 6.2 3.8 6.7V11.5C3.8 16 7.2 19.7 12 21.2C16.8 19.7 20.2 16 20.2 11.5V6.7C20.2 6.2 19.9 5.7 19.4 5.5L12 2.8Z"/><circle cx="12" cy="11.6" r="2.5" fill="currentColor" stroke="none"/></svg>',
+  bag: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+  gear: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  back: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  chev: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  globe: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4.2" ry="9"/><path d="M3.5 9h17M3.5 15h17"/></svg>',
+  arrows: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h15M15 5l4 4-4 4"/><path d="M20 15H5M9 11l-4 4 4 4"/></svg>',
+  sun: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.5" fill="#ff9f0a"/><path d="M12 2.5v2.7M12 18.8v2.7M2.5 12h2.7M18.8 12h2.7M5.3 5.3l1.9 1.9M16.8 16.8l1.9 1.9M18.7 5.3l-1.9 1.9M7.2 16.8l-1.9 1.9" stroke="#ff9f0a" stroke-width="2" stroke-linecap="round"/></svg>',
+  chat: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 6.5C4 5.1 5.1 4 6.5 4h7C14.9 4 16 5.1 16 6.5v4c0 1.4-1.1 2.5-2.5 2.5H9l-3.2 2.4V13H6.5C5.1 13 4 11.9 4 10.5v-4z" fill="#30d1b0" opacity="0.88"/><path d="M9.5 11.5c0-1.1.9-2 2-2h6.5c1.1 0 2 .9 2 2v3.5c0 1.1-.9 2-2 2h-.5v2.2L14.8 17h-3.3c-1.1 0-2-.9-2-2v-3.5z" fill="#5ce1e6"/></svg>',
+  sparkle: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M10.5 3.5L12.3 9.7L18.5 11.5L12.3 13.3L10.5 19.5L8.7 13.3L2.5 11.5L8.7 9.7L10.5 3.5Z" fill="#a594ff"/><path d="M18 3l.8 2.6L21.5 6.5l-2.7.9L18 10l-.8-2.6L14.5 6.5l2.7-.9L18 3z" fill="#c4b5fd"/></svg>',
+  vectra: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2.5L4.5 5.3v5.8c0 4.8 3.3 8.8 7.5 10.4 4.2-1.6 7.5-5.6 7.5-10.4V5.3L12 2.5z" fill="#0a84ff"/><path d="M13 7l-4 5.5h3.2L11 17l4-5.5h-3.2L13 7z" fill="#fff"/></svg>',
+  checkCircle: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M8 12.3l2.7 2.7 5.5-5.8" stroke="#141416" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  warnTri: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3L22 20H2L12 3z" fill="currentColor"/><path d="M12 9.5v4.8" stroke="#141416" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.3" fill="#141416"/></svg>',
+  card: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a84ff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19"/><path d="M6.5 15h4"/></svg>',
+  bagCheck: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#30d158" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/><path d="M9.5 14l1.7 1.7 3.3-3.4"/></svg>',
+  wrench: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+  download: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8.5 12.5L12 16l3.5-3.5"/></svg>'
+};
+
+const COUNTRIES = ['Нидерланды','Германия','США','Финляндия','Великобритания','Сингапур','Япония'];
+let state = null;
+let ui = {
+  storeDetail: 'proxy',
+  storeCountry: 'Нидерланды',
+  storeMonths: 1,
+  storeAmount: 20,
+  storeIncludeIp: true,
+  copiedId: ''
+};
+
+function post(msg) {
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.postMessage(msg);
+  }
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderHeader(isHome) {
+  const backTarget = (state.page === 'store-detail') ? 'store' : 'home';
+  const backLabel = (state.page === 'store-detail') ? 'Магазин' : 'Назад';
+  return `
+    <div class="topbar">
+      ${isHome
+        ? `<span class="brand-icon">${ICONS.shield}</span>`
+        : `<button class="back-btn" data-nav="${backTarget}">${ICONS.back}<span>${backLabel}</span></button>`}
+      <span class="brand-title">AI Exit Guard</span>
+      <span class="brand-ver">${esc(state.version)}</span>
+      <span class="spacer"></span>
+      ${isHome ? `
+        <button class="icon-btn" data-nav="store" title="Магазин" aria-label="Магазин">${ICONS.bag}</button>
+        <button class="icon-btn" data-nav="settings" title="Настройки" aria-label="Настройки">${ICONS.gear}</button>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderHome() {
+  const tone = state.verdictTone || 'neutral';
+  const heroIcon = state.verdictIcon === 'globe' ? ICONS.globe
+    : state.verdictIcon === 'check' ? ICONS.checkCircle
+    : state.verdictIcon === 'warn' ? ICONS.warnTri
+    : ICONS.shield;
+  const svcIcons = [ICONS.sun, ICONS.chat, ICONS.sparkle];
+
+  const servicesHtml = (state.services || []).map((s, idx) => `
+    ${idx > 0 ? '<div class="divider tight"></div>' : ''}
+    <div>
+      <div class="row">
+        <span class="row-icon">${svcIcons[idx] || ICONS.globe}</span>
+        <div class="row-main"><div class="row-title">${esc(s.name)}</div></div>
+        <div class="row-right">
+          <span class="svc-status ${esc(s.tone || 'muted')}">${esc(s.status)}</span>
+        </div>
+      </div>
+      ${s.reason ? `<div class="svc-reason">${esc(s.reason)}</div>` : ''}
+    </div>
+  `).join('');
+
+  const updateHtml = state.update && state.update.available ? `
+    <div class="card update">
+      <div class="row">
+        <span class="row-icon" style="color:var(--blue)">${ICONS.download}</span>
+        <div class="row-main">
+          <div class="row-title">Доступно обновление ${esc(state.update.latest)}</div>
+          <div class="row-sub">${esc(state.update.busy ? 'Загрузка с GitHub…' : 'Новая версия готова к установке')}</div>
+        </div>
+        <button class="btn primary sm" data-action="update-install" ${state.update.busy ? 'disabled' : ''}>${state.update.busy ? 'Загрузка…' : 'Обновить'}</button>
+      </div>
+    </div>
+  ` : '';
+
+  return `
+    ${renderHeader(true)}
+    <div class="hero tone-${esc(tone)}">
+      <div class="hero-row">
+        <span class="hero-icon" style="display:inline-flex">${heroIcon}</span>
+        <div class="hero-title">${esc(state.verdict)}</div>
+      </div>
+      <div class="hero-sub">${esc(state.status)}</div>
+    </div>
+
+    ${updateHtml}
+
+    <div class="card">
+      <div class="card-label">Сервисы</div>
+      ${servicesHtml}
+    </div>
+
+    <div class="card">
+      <div class="row clickable" data-nav="proxy">
+        <span class="row-icon" style="color:var(--ink)">${ICONS.globe}</span>
+        <div class="row-main"><div class="row-title">${esc(state.proxyTitle || 'Прокси')}</div></div>
+        <div class="row-right">
+          <span>${esc(state.proxyBadge)}</span>
+          <span class="chev">${ICONS.chev}</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="row">
+        <div class="row-main">
+          <div class="row-title">Защита по IP</div>
+          <div class="row-sub">${esc(state.modeHint)}</div>
+        </div>
+        <button class="switch ${state.protection ? 'on' : ''}" role="switch" aria-checked="${state.protection ? 'true' : 'false'}"
+          data-action="toggle-protection" ${state.protectionEnabled ? '' : 'disabled'}></button>
+      </div>
+    </div>
+
+    <div class="card compact">
+      <div class="row clickable" data-nav="connections" style="padding:7px 6px;">
+        <span class="row-icon" style="color:var(--ink)">${ICONS.arrows}</span>
+        <div class="row-main"><div class="row-title">Активные подключения</div></div>
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+    </div>
+
+    <div class="card vectra">
+      <div class="row">
+        <span class="row-icon">${ICONS.vectra}</span>
+        <div class="row-main">
+          <div class="row-title">Vectra Connect</div>
+          <div class="row-sub">Лучший VPN-сервис для быстрой и стабильной работы</div>
+        </div>
+        <button class="btn subtle sm" data-action="open-vectra">Открыть</button>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span class="footer-note">${esc(state.lastResult)}</span>
+      <button class="btn primary" data-action="check-address" ${state.checkEnabled ? '' : 'disabled'}>${esc(state.checkText || 'Проверить адрес')}</button>
+    </div>
+  `;
+}
+
+function renderProxySlot(slot, idx, isPrimary) {
+  const locked = !state.inputsEnabled;
+  const schemes = ['HTTP', 'HTTPS', 'SOCKS5'];
+  return `
+    <div class="card">
+      ${!isPrimary ? `<div class="row-title" style="margin-bottom:6px">${esc(slot.name)}</div>` : ''}
+      <div class="row" style="margin-bottom:2px">
+        <span class="field-label" style="margin:0">Протокол</span>
+        <span class="spacer"></span>
+        <label class="check-row" style="font-size:12px;color:var(--muted)">
+          <input type="checkbox" data-slot-byfield="${idx}" ${slot.byField ? 'checked' : ''} ${locked ? 'disabled' : ''}>
+          Ввести по полям
+        </label>
+      </div>
+      <div class="seg">
+        ${schemes.map(s => `<button type="button" class="${slot.scheme === s ? 'active' : ''}" data-slot-scheme="${idx}:${s}" ${locked ? 'disabled' : ''}>${s}</button>`).join('')}
+      </div>
+      ${slot.byField ? `
+        <div class="stack-gap" style="gap:8px">
+          <div>
+            <label class="field-label">Адрес и порт</label>
+            <input class="input" type="text" value="${esc(slot.address)}" placeholder="1.2.3.4:8000" data-slot-field="${idx}:address" ${locked ? 'disabled' : ''}>
+          </div>
+          <div>
+            <label class="field-label">Логин</label>
+            <input class="input" type="text" value="${esc(slot.login)}" data-slot-field="${idx}:login" ${locked ? 'disabled' : ''}>
+          </div>
+          <div>
+            <label class="field-label">Пароль</label>
+            <input class="input" type="${slot.reveal ? 'text' : 'password'}" value="${esc(slot.password)}" data-slot-field="${idx}:password" ${locked ? 'disabled' : ''}>
+          </div>
+        </div>
+      ` : `
+        <label class="field-label">Строка прокси · логин:пароль@адрес:порт</label>
+        <input class="input" type="${slot.reveal ? 'text' : 'password'}" value="${esc(slot.url)}" placeholder="user:pass@host:port" data-slot-url="${idx}" ${locked ? 'disabled' : ''}>
+      `}
+      <div class="btn-row">
+        <div class="btn-group">
+          ${!slot.byField ? `<button class="btn sm" data-action="paste-proxy" data-idx="${idx}" ${locked ? 'disabled' : ''}>Вставить</button>` : ''}
+          <label class="check-row" style="font-size:12px;color:var(--muted);margin-left:4px">
+            <input type="checkbox" data-slot-reveal="${idx}" ${slot.reveal ? 'checked' : ''}>
+            ${slot.byField ? 'Показать пароль' : 'Показать строку'}
+          </label>
+        </div>
+        ${isPrimary ? `
+          <button class="btn ${state.relayActive ? '' : 'primary'}" data-action="toggle-connect" ${state.startEnabled ? '' : 'disabled'}>${esc(state.startText)}</button>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderProxyPage() {
+  const slots = state.proxySlots || [];
+  const saved = state.savedProxies || [];
+  return `
+    ${renderHeader(false)}
+    <div class="page-title">Общий прокси</div>
+    ${state.inputFeedback ? `<div class="feedback">${esc(state.inputFeedback)}</div>` : ''}
+    ${slots[0] ? renderProxySlot(slots[0], 0, true) : ''}
+
+    ${saved.length > 0 ? `
+      <div class="card">
+        <div class="card-label">Сохранённые прокси</div>
+        ${saved.map(item => `
+          <div class="saved-row">
+            <span class="saved-name">${esc(item.title)}</span>
+            <button class="btn sm" data-action="use-saved" data-id="${esc(item.id)}">Выбрать</button>
+            <button class="btn sm" data-action="copy-saved" data-id="${esc(item.id)}">${ui.copiedId === item.id ? 'Скопировано' : 'Копировать'}</button>
+            <button class="btn sm danger-ghost" data-action="del-saved" data-id="${esc(item.id)}">×</button>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    <div class="card compact">
+      <div class="row clickable" data-open-store="proxy" style="padding:7px 6px;">
+        <span class="row-icon" style="color:var(--blue)">${ICONS.globe}</span>
+        <div class="row-main"><div class="row-title">Купить чистый прокси</div></div>
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+    </div>
+
+    <button class="collapsible-btn" data-action="toggle-routes">
+      Отдельные прокси ${state.showRouteOptions ? '▾' : '▸'}
+    </button>
+
+    ${state.showRouteOptions ? `
+      <div class="stack-gap">
+        ${slots.slice(1).map((s, i) => renderProxySlot(s, i + 1, false)).join('')}
+        <div class="card">
+          <label class="check-row">
+            <input type="checkbox" data-action="toggle-mismatch" ${state.allowMismatch ? 'checked' : ''} ${state.inputsEnabled ? '' : 'disabled'}>
+            Разрешить разные страны Google и IPinfo для Antigravity
+          </label>
+        </div>
+      </div>
+    ` : ''}
+  `;
+}
+
+function renderConnections() {
+  const flows = state.flows || [];
+  return `
+    ${renderHeader(false)}
+    <div class="page-title">Активные подключения</div>
+    <div class="card">
+      <div class="row-sub" style="margin-top:0">${esc(state.dnsNote || 'Сверяем прямые TCP-соединения с DNS Windows…')}</div>
+      <div class="flow-list">
+        <div class="flow-row head"><span>Состояние</span><span>Адрес</span><span style="text-align:right">Время</span></div>
+        ${flows.length === 0
+          ? `<div class="row-sub" style="padding:14px 0;text-align:center">Пока нет зафиксированных соединений</div>`
+          : flows.map(f => `
+            <div class="flow-row">
+              <span class="svc-status ${esc(f.tone || 'muted')}">${esc(f.state)}</span>
+              <span class="flow-domain selectable">${esc(f.domain)}</span>
+              <span class="flow-time">${esc(f.time)}</span>
+            </div>
+          `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderSettings() {
+  const p = state.patch || {};
+  const u = state.update || {};
+  return `
+    ${renderHeader(false)}
+    <div class="page-title">Настройки</div>
+
+    ${state.dnsCleanupVisible ? `
+      <div class="card">
+        <div class="row">
+          <div class="row-main">
+            <div class="row-title">Прежнее правило доменов</div>
+            <div class="row-sub">Осталось от предыдущего запуска Guard</div>
+          </div>
+          <button class="btn sm" data-action="clear-dns">Убрать</button>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="card">
+      <div class="row">
+        <span class="row-icon" style="color:var(--muted)">${ICONS.wrench}</span>
+        <div class="row-main">
+          <div class="row-title">Патч Antigravity</div>
+          <div class="row-sub" style="color:${p.tone === 'ok' ? 'var(--green)' : p.tone === 'warn' ? 'var(--amber)' : 'var(--muted)'}">${esc(p.status || 'Проверяем…')}</div>
+          ${p.error ? `<div class="error-text">${esc(p.error)}</div>` : ''}
+        </div>
+        <button class="btn sm" data-action="patch-run" ${p.enabled ? '' : 'disabled'}>${esc(p.button || 'Проверить')}</button>
+      </div>
+      <div class="divider"></div>
+      <div class="row">
+        <span class="row-icon" style="color:var(--muted)">${ICONS.download}</span>
+        <div class="row-main">
+          <div class="row-title">Обновления Guard</div>
+          <div class="row-sub" style="color:${u.available ? 'var(--blue)' : 'var(--muted)'}">${esc(u.status || ('Версия ' + state.version))}</div>
+        </div>
+        <button class="btn sm ${u.available ? 'primary' : ''}" data-action="${u.available ? 'update-install' : 'update-check'}" ${u.busy ? 'disabled' : ''}>${esc(u.button || 'Проверить')}</button>
+      </div>
+    </div>
+
+    <div>
+      <button class="btn danger-ghost" data-action="quit">Завершить AI Exit Guard</button>
+    </div>
+  `;
+}
+
+function renderStore() {
+  const count = (state.purchases || []).length;
+  return `
+    ${renderHeader(false)}
+    <div class="page-title">Магазин</div>
+    <div class="card compact">
+      <div class="row clickable" data-open-store="proxy" style="padding:9px 6px;">
+        <span class="row-icon" style="color:var(--blue)">${ICONS.globe}</span>
+        <div class="row-main">
+          <div class="row-title">Чистый прокси</div>
+          <div class="row-sub">Статический IP без скачков и банов</div>
+        </div>
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+      <div class="divider tight"></div>
+      <div class="row clickable" data-open-store="card" style="padding:9px 6px;">
+        <span class="row-icon">${ICONS.card}</span>
+        <div class="row-main">
+          <div class="row-title">Карта Vectra Pay</div>
+          <div class="row-sub">Для оплаты Claude, ChatGPT и Cursor</div>
+        </div>
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+      <div class="divider tight"></div>
+      <div class="row clickable" data-open-store="claude" style="padding:9px 6px;">
+        <span class="row-icon">${ICONS.sparkle}</span>
+        <div class="row-main">
+          <div class="row-title">Аккаунт Claude</div>
+          <div class="row-sub">Верифицированный · можно сразу с IP</div>
+        </div>
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+    </div>
+
+    <div class="card compact">
+      <div class="row clickable" data-open-store="purchases" style="padding:9px 6px;">
+        <span class="row-icon">${ICONS.bagCheck}</span>
+        <div class="row-main">
+          <div class="row-title">Мои покупки</div>
+          <div class="row-sub">Карты, аккаунты и прокси</div>
+        </div>
+        ${count > 0 ? `<span class="badge-count">${count}</span>` : ''}
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderStoreDetail() {
+  const kind = state.storeDetail || ui.storeDetail || 'proxy';
+  let body = '';
+  if (kind === 'proxy') {
+    body = `
+      <div class="page-title">Чистый прокси</div>
+      <div class="page-sub">Выделенный IP, проверенный для Claude, ChatGPT и Antigravity.</div>
+      <div class="card stack-gap">
+        <div>
+          <label class="field-label">Страна</label>
+          <select class="select" data-store-country>
+            ${COUNTRIES.map(c => `<option value="${esc(c)}" ${ui.storeCountry === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="field-label">Срок</label>
+          <div class="seg cols-2" style="margin:0">
+            <button type="button" class="${ui.storeMonths === 1 ? 'active' : ''}" data-store-months="1">1 месяц</button>
+            <button type="button" class="${ui.storeMonths === 3 ? 'active' : ''}" data-store-months="3">3 месяца</button>
+          </div>
+        </div>
+        <button class="btn primary full" disabled>Оплатить · Скоро</button>
+        <div class="row-sub" style="margin:0">После оплаты прокси сам добавится в Guard и подключится.</div>
+      </div>
+    `;
+  } else if (kind === 'card') {
+    body = `
+      <div class="page-title">Карта Vectra Pay</div>
+      <div class="page-sub">Предоплаченная Visa с готовым Billing Address под оплату ИИ.</div>
+      <div class="card stack-gap">
+        <div>
+          <label class="field-label">Номинал</label>
+          <div class="seg" style="margin:0">
+            ${[20, 100, 200].map(a => `<button type="button" class="${ui.storeAmount === a ? 'active' : ''}" data-store-amount="${a}">$${a}</button>`).join('')}
+          </div>
+        </div>
+        <button class="btn primary full" disabled>Выпустить карту · Скоро</button>
+        <div class="row-sub" style="margin:0">Карта появится в «Мои покупки» с копированием в 1 клик.</div>
+      </div>
+    `;
+  } else if (kind === 'claude') {
+    body = `
+      <div class="page-title">Аккаунт Claude</div>
+      <div class="page-sub">Верифицированный аккаунт с доступом к почте.</div>
+      <div class="card stack-gap">
+        <label class="check-row">
+          <input type="checkbox" data-store-ip ${ui.storeIncludeIp ? 'checked' : ''}>
+          Добавить личный IP (привяжется к Claude автоматически)
+        </label>
+        <button class="btn primary full" disabled>Оплатить · Скоро</button>
+        <div class="row-sub" style="margin:0">Логин, пароль и почта сохранятся в «Мои покупки».</div>
+      </div>
+    `;
+  } else {
+    const list = state.purchases || [];
+    body = `
+      <div class="page-title">Мои покупки</div>
+      ${list.length === 0 ? `
+        <div class="card">
+          <div class="row-title">Покупок пока нет</div>
+          <div class="row-sub">Купленные прокси, карты Vectra Pay и аккаунты появятся здесь и сохранятся зашифрованно.</div>
+        </div>
+      ` : list.map((item, idx) => `
+        <div class="card stack-gap">
+          <div class="row-title">${esc(item.title || 'Покупка')}</div>
+          <div class="btn-group">
+            ${item.cardNumber ? `<button class="btn sm" data-action="copy-text" data-text="${esc(item.cardNumber)}">Копировать номер карты</button>` : ''}
+            ${item.proxyLine ? `<button class="btn sm" data-action="copy-text" data-text="${esc(item.proxyLine)}">Копировать прокси</button>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+  return `${renderHeader(false)}${body}`;
+}
+
+function render() {
+  if (!state) return;
+  const active = document.activeElement;
+  const focusKey = active && (active.dataset.slotUrl || active.dataset.slotField);
+  const selStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+
+  const root = document.getElementById('root');
+  if (state.page === 'proxy') root.innerHTML = renderProxyPage();
+  else if (state.page === 'connections') root.innerHTML = renderConnections();
+  else if (state.page === 'settings') root.innerHTML = renderSettings();
+  else if (state.page === 'store') root.innerHTML = renderStore();
+  else if (state.page === 'store-detail') root.innerHTML = renderStoreDetail();
+  else root.innerHTML = renderHome();
+
+  if (focusKey) {
+    const el = root.querySelector(`[data-slot-url="${focusKey}"], [data-slot-field="${focusKey}"]`);
+    if (el) {
+      el.focus();
+      if (selStart !== null) try { el.setSelectionRange(selStart, selStart); } catch (_) {}
+    }
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const nav = e.target.closest('[data-nav]');
+  if (nav) { post({ type: 'nav', page: nav.dataset.nav }); return; }
+
+  const openStore = e.target.closest('[data-open-store]');
+  if (openStore) {
+    ui.storeDetail = openStore.dataset.openStore;
+    post({ type: 'open-store', kind: ui.storeDetail });
+    return;
+  }
+
+  const schemeBtn = e.target.closest('[data-slot-scheme]');
+  if (schemeBtn) {
+    const [idx, scheme] = schemeBtn.dataset.slotScheme.split(':');
+    post({ type: 'set-scheme', idx: Number(idx), scheme });
+    return;
+  }
+
+  const monthsBtn = e.target.closest('[data-store-months]');
+  if (monthsBtn) { ui.storeMonths = Number(monthsBtn.dataset.storeMonths); render(); return; }
+
+  const amtBtn = e.target.closest('[data-store-amount]');
+  if (amtBtn) { ui.storeAmount = Number(amtBtn.dataset.storeAmount); render(); return; }
+
+  const act = e.target.closest('[data-action]');
+  if (!act) return;
+  const action = act.dataset.action;
+  if (action === 'copy-saved') {
+    ui.copiedId = act.dataset.id;
+    render();
+    setTimeout(() => { if (ui.copiedId === act.dataset.id) { ui.copiedId = ''; render(); } }, 1400);
+  }
+  post({ type: action, idx: act.dataset.idx ? Number(act.dataset.idx) : undefined, id: act.dataset.id, text: act.dataset.text });
+});
+
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.slotByfield !== undefined) {
+    post({ type: 'set-byfield', idx: Number(t.dataset.slotByfield), value: t.checked });
+  } else if (t.dataset.slotReveal !== undefined) {
+    post({ type: 'set-reveal', idx: Number(t.dataset.slotReveal), value: t.checked });
+  } else if (t.dataset.action === 'toggle-mismatch') {
+    post({ type: 'set-mismatch', value: t.checked });
+  } else if (t.hasAttribute('data-store-country')) {
+    ui.storeCountry = t.value;
+  } else if (t.hasAttribute('data-store-ip')) {
+    ui.storeIncludeIp = t.checked;
+  }
+});
+
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t.dataset.slotUrl !== undefined) {
+    post({ type: 'set-url', idx: Number(t.dataset.slotUrl), value: t.value });
+  } else if (t.dataset.slotField !== undefined) {
+    const [idx, field] = t.dataset.slotField.split(':');
+    post({ type: 'set-field', idx: Number(idx), field, value: t.value });
+  }
+});
+
+window.guardRender = function(next) {
+  state = next;
+  if (next && next.storeDetail) ui.storeDetail = next.storeDetail;
+  render();
+};
+
+if (window.chrome && window.chrome.webview) {
+  window.chrome.webview.addEventListener('message', (e) => {
+    window.guardRender(e.data);
+  });
+  post({ type: 'ready' });
+}
+</script>
+</body>
+</html>

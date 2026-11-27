@@ -5,12 +5,15 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 sealed class GuardWindow : Form {
     sealed class Route {
@@ -53,6 +56,90 @@ sealed class GuardWindow : Form {
     readonly Label[] outcomes = new Label[3];
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
     [DllImport("uxtheme.dll", CharSet=CharSet.Unicode)] static extern int SetWindowTheme(IntPtr hwnd, string appName, string idList);
+    [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr hIcon);
+    WebView2 webView;
+    bool webReady;
+    readonly TaskCompletionSource<bool> webInitDone=new TaskCompletionSource<bool>();
+    string currentStoreDetail="proxy";
+    string lastWebPayload="";
+    string currentTrayMood="";
+    Icon customTrayIcon;
+    Icon customAppIcon;
+    static GraphicsPath ShieldContourPath(float cx,float topY,float w,float h){
+        var p=new GraphicsPath();
+        float half=w*0.5f;
+        float shY=topY+h*0.16f;
+        float midY=topY+h*0.48f;
+        float botY=topY+h;
+        p.AddLine(cx,topY,cx+half,shY);
+        p.AddLine(cx+half,shY,cx+half,midY);
+        p.AddBezier(cx+half,midY,cx+half,topY+h*0.76f,cx+w*0.26f,topY+h*0.92f,cx,botY);
+        p.AddBezier(cx,botY,cx-w*0.26f,topY+h*0.92f,cx-half,topY+h*0.76f,cx-half,midY);
+        p.AddLine(cx-half,midY,cx-half,shY);
+        p.CloseFigure();
+        return p;
+    }
+    static Icon IconFromBitmap(Bitmap bmp){
+        IntPtr h=bmp.GetHicon();
+        try{return (Icon)Icon.FromHandle(h).Clone();}
+        finally{DestroyIcon(h);}
+    }
+    static Icon CreateAppIcon(){
+        using(var bmp=new Bitmap(64,64))
+        using(var g=Graphics.FromImage(bmp)){
+            g.SmoothingMode=SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+            using(var tile=RoundRect(4,4,56,56,14))
+            using(var bg=new LinearGradientBrush(new Rectangle(4,4,56,56),Color.FromArgb(28,33,46),Color.FromArgb(13,15,23),90f))
+            using(var rim=new Pen(Color.FromArgb(34,255,255,255),1.2f)){
+                g.FillPath(bg,tile);
+                g.DrawPath(rim,tile);
+            }
+            using(var shield=ShieldContourPath(32f,14f,30f,35f))
+            using(var pen=new Pen(Color.FromArgb(238,242,248),4.2f){LineJoin=LineJoin.Round,StartCap=LineCap.Round,EndCap=LineCap.Round}){
+                g.DrawPath(pen,shield);
+            }
+            using(var core=new SolidBrush(Color.FromArgb(56,217,158)))
+                g.FillEllipse(core,26.2f,26.5f,11.6f,11.6f);
+            return IconFromBitmap(bmp);
+        }
+    }
+    static Icon CreateTrayIcon(string mood){
+        using(var bmp=new Bitmap(32,32))
+        using(var g=Graphics.FromImage(bmp)){
+            g.SmoothingMode=SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+            bool off=mood=="off";
+            Color stroke=off?Color.FromArgb(145,235,238,245):Color.FromArgb(245,247,250);
+            using(var shield=ShieldContourPath(16f,3.5f,21f,25f))
+            using(var pen=new Pen(stroke,2.9f){LineJoin=LineJoin.Round,StartCap=LineCap.Round,EndCap=LineCap.Round}){
+                g.DrawPath(pen,shield);
+            }
+            if(off){
+                using(var p=new Pen(stroke,2.6f){StartCap=LineCap.Round,EndCap=LineCap.Round}){
+                    g.DrawLine(p,13.2f,12.5f,13.2f,19.5f);
+                    g.DrawLine(p,18.8f,12.5f,18.8f,19.5f);
+                }
+            }else{
+                Color dot=Color.FromArgb(245,247,250);
+                if(mood=="ok")dot=Color.FromArgb(56,217,158);
+                else if(mood=="warn")dot=Color.FromArgb(250,184,36);
+                else if(mood=="danger")dot=Color.FromArgb(250,86,86);
+                float r=mood=="warn" || mood=="danger"?4.2f:3.7f;
+                using(var b=new SolidBrush(dot))
+                    g.FillEllipse(b,16f-r,15.8f-r,r*2f,r*2f);
+            }
+            return IconFromBitmap(bmp);
+        }
+    }
+    void SetTrayMood(string mood){
+        if(currentTrayMood==mood && customTrayIcon!=null)return;
+        currentTrayMood=mood;
+        Icon nextIcon=CreateTrayIcon(mood);
+        tray.Icon=nextIcon;
+        if(customTrayIcon!=null)customTrayIcon.Dispose();
+        customTrayIcon=nextIcon;
+    }
     protected override void OnHandleCreated(EventArgs e){
         base.OnHandleCreated(e);
         try{int dark=1;if(DwmSetWindowAttribute(Handle,20,ref dark,4)!=0)DwmSetWindowAttribute(Handle,19,ref dark,4);}catch{}
@@ -700,13 +787,16 @@ sealed class GuardWindow : Form {
         Shown+=(sender,e)=>{if(!smokeMode)RunAppUpdate("check");};
         pages.SelectedIndexChanged+=(sender,e)=>{if(pages.SelectedIndex==3 && !patchBusy)RunAntigravity("status");};
         ShowIdle("Выключен");
-        tray.Icon=SystemIcons.Shield;tray.Visible=true; tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWindow();};
+        tray.Visible=true; tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWindow();};
+        customAppIcon=CreateAppIcon();
+        this.Icon=customAppIcon;
+        SetTrayMood("off");
         var menu=new ContextMenuStrip();menu.Items.Add("Открыть",null,(s,e)=>ShowWindow());
         menu.Items.Add("Активные подключения",(Image)null,(s,e)=>{ShowWindow();openFlows(s,e);});menu.Items.Add("Выход",null,(s,e)=>{quitting=true;Close();});tray.ContextMenuStrip=menu;
         FormClosing+=(s,e)=>{if(!quitting && e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();return;}
             if(ProxyOnly && !ReleaseDomains()){quitting=false;e.Cancel=true;ShowWindow();}};
-        FormClosed+=(s,e)=>{timer.Stop();Stop();tray.Dispose();detail.Dispose();};
-        timer.Interval=350;timer.Tick+=(s,e)=>Poll();timer.Start();
+        FormClosed+=(s,e)=>{timer.Stop();Stop();if(webView!=null){try{webView.Dispose();}catch{}webView=null;}tray.Dispose();if(customTrayIcon!=null)customTrayIcon.Dispose();if(customAppIcon!=null)customAppIcon.Dispose();detail.Dispose();};
+        timer.Interval=350;timer.Tick+=(s,e)=>{Poll();SyncWebUi(false);};timer.Start();
         State("Откройте настройки, чтобы подключить прокси.",false);
         if(File.Exists(saved)) {
             try {
@@ -718,7 +808,260 @@ sealed class GuardWindow : Form {
                 if(!File.Exists(Path.Combine(dataDirectory,"paused")))Shown+=(s,e)=>Connect();
             }catch{State("Не удалось прочитать сохранённые прокси.",false);}
         }
+        InitWebUi(dataDirectory);
         ResumeLayout(true);
+    }
+    async void InitWebUi(string dataDirectory){
+        try{
+            webView=new WebView2{Dock=DockStyle.Fill,Visible=false,DefaultBackgroundColor=Color.FromArgb(28,28,30)};
+            Controls.Add(webView);
+            webView.BringToFront();
+            string udfs=Path.Combine(dataDirectory,"webview2");
+            var env=await CoreWebView2Environment.CreateAsync(null,udfs);
+            await webView.EnsureCoreWebView2Async(env);
+            if(IsDisposed || Disposing){webInitDone.TrySetResult(false);return;}
+            var s=webView.CoreWebView2.Settings;
+            s.AreDefaultContextMenusEnabled=false;
+            s.AreDevToolsEnabled=false;
+            s.IsStatusBarEnabled=false;
+            s.IsZoomControlEnabled=false;
+            webView.CoreWebView2.WebMessageReceived+=(sender,args)=>{
+                try{HandleWebMessage(args.WebMessageAsJson);}catch{}
+            };
+            string html="";
+            using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("guard-ui.html"))
+            using(var reader=new StreamReader(stream,Encoding.UTF8))
+                html=reader.ReadToEnd();
+            webView.NavigateToString(html);
+        }catch{
+            if(webView!=null && !webView.IsDisposed)webView.Visible=false;
+            webInitDone.TrySetResult(false);
+        }
+    }
+    string CurrentPageKey(){
+        switch(pages.SelectedIndex){
+            case 1:return "proxy";
+            case 2:return "connections";
+            case 3:return "settings";
+            case 4:return "store";
+            case 5:return "store-detail";
+            default:return "home";
+        }
+    }
+    void SyncWebUi(bool force){
+        if(!webReady || webView==null || webView.IsDisposed || webView.CoreWebView2==null)return;
+        try{
+            bool routing=ProxyOnly && relayReady;
+            bool danger=leases!=null && leases.Values.Any(r=>r.HighRisk && r.Until==0);
+            bool closed=relay!=null && leases!=null && status.Text.StartsWith("Доступно сервисов: 0 из 3",StringComparison.Ordinal);
+            bool open=verdict.Text=="Можно работать";
+            string tone="neutral";
+            string icon="shield";
+            if(routing && danger){tone="bad";icon="warn";}
+            else if(routing){tone="neutral";icon="globe";}
+            else if(relay==null && !retrying){tone="neutral";icon="shield";}
+            else if(open){tone="ok";icon="check";}
+            else if(closed){tone="bad";icon="warn";}
+            else{tone="warn";icon="warn";}
+
+            var svcList=new List<object>();
+            for(int i=0;i<3;i++){
+                string st=outcomes[i].Text;
+                string stTone="muted";
+                if(st.Contains("Можно") || st.Contains("Низкий"))stTone="ok";
+                else if(st.Contains("замечание"))stTone="warn";
+                else if(st.Contains("Закрыт") || st.Contains("Высокий"))stTone="bad";
+                svcList.Add(new Dictionary<string,object>{
+                    {"name",names[i+1]},{"status",st},{"tone",stTone},{"reason",reasons[i].Visible?reasons[i].Text:""}
+                });
+            }
+            var slotList=new List<object>();
+            for(int i=0;i<4;i++){
+                slotList.Add(new Dictionary<string,object>{
+                    {"name",names[i]},
+                    {"scheme",schemes[i].Selected},
+                    {"url",urls[i].Text},
+                    {"byField",byField[i].Checked},
+                    {"address",addresses[i].Text},
+                    {"login",logins[i].Text},
+                    {"password",passwords[i].Text},
+                    {"reveal",reveal[i].Checked}
+                });
+            }
+            var savedList=new List<object>();
+            foreach(var sp in savedProxies){
+                savedList.Add(new Dictionary<string,object>{{"id",sp.Id},{"title",SavedProxyTitle(sp)}});
+            }
+            var purchaseList=new List<object>();
+            foreach(var pr in storePurchases){
+                purchaseList.Add(new Dictionary<string,object>{
+                    {"id",pr.Id??""},{"title",pr.Title??"Покупка"},
+                    {"cardNumber",pr.CardNumber??""},{"proxyLine",pr.ProxyLine??""}
+                });
+            }
+            string patchTone="muted";
+            if(patchState.Text.StartsWith("Пропатчен",StringComparison.Ordinal))patchTone="ok";
+            else if(patchState.ForeColor.R>200)patchTone="warn";
+
+            var payload=new Dictionary<string,object>{
+                {"page",CurrentPageKey()},
+                {"storeDetail",currentStoreDetail},
+                {"version",Application.ProductVersion},
+                {"verdict",verdict.Text},
+                {"verdictTone",tone},
+                {"verdictIcon",icon},
+                {"status",status.Text},
+                {"proxyTitle",String.IsNullOrWhiteSpace(urls[0].Text)?"Добавить прокси":"Прокси"},
+                {"proxyBadge",proxyBadge.Text},
+                {"protection",protection.Checked},
+                {"protectionEnabled",protection.Enabled},
+                {"modeHint",modeHint.Text},
+                {"lastResult",lastResult.Text},
+                {"checkEnabled",checkAddress.Enabled},
+                {"checkText",checkAddress.Text},
+                {"services",svcList},
+                {"proxySlots",slotList},
+                {"inputsEnabled",urls[0].Enabled},
+                {"startEnabled",start.Enabled},
+                {"startText",start.Text},
+                {"relayActive",relay!=null || retrying},
+                {"inputFeedback",inputFeedback.Visible?inputFeedback.Text:""},
+                {"savedProxies",savedList},
+                {"showRouteOptions",optionalRoutes.Visible},
+                {"allowMismatch",allowMismatch.Checked},
+                {"flows",connections!=null?connections.SnapshotRows():new List<Dictionary<string,string>>()},
+                {"dnsNote",connections!=null?connections.NoteText:""},
+                {"dnsCleanupVisible",dns.Visible},
+                {"patch",new Dictionary<string,object>{
+                    {"status",patchState.Text},{"tone",patchTone},
+                    {"error",patchError.Visible?patchError.Text:""},
+                    {"button",patchButton.Text},{"enabled",patchButton.Enabled}
+                }},
+                {"update",new Dictionary<string,object>{
+                    {"available",!String.IsNullOrEmpty(availableVersion)},
+                    {"latest",availableVersion},
+                    {"status",updateState.Text},
+                    {"button",updateButton.Text},
+                    {"busy",updateBusy}
+                }},
+                {"purchases",purchaseList}
+            };
+            string text=json.Serialize(payload);
+            if(!force && text==lastWebPayload)return;
+            lastWebPayload=text;
+            webView.CoreWebView2.PostWebMessageAsJson(text);
+        }catch{}
+    }
+    void HandleWebMessage(string raw){
+        var msg=json.Deserialize<Dictionary<string,object>>(raw);
+        if(msg==null || !msg.ContainsKey("type"))return;
+        string type=Convert.ToString(msg["type"]);
+        int idx=msg.ContainsKey("idx") && msg["idx"]!=null?Convert.ToInt32(msg["idx"]):0;
+        switch(type){
+            case "ready":
+                webReady=true;
+                if(webView!=null && !webView.IsDisposed)webView.Visible=true;
+                SyncWebUi(true);
+                webInitDone.TrySetResult(true);
+                break;
+            case "nav":{
+                string p=msg.ContainsKey("page")?Convert.ToString(msg["page"]):"home";
+                if(p=="proxy")pages.SelectedIndex=1;
+                else if(p=="connections"){pages.SelectedIndex=2;nextFlows=DateTime.MinValue;}
+                else if(p=="settings")pages.SelectedIndex=3;
+                else if(p=="store")pages.SelectedIndex=4;
+                else pages.SelectedIndex=0;
+                SyncWebUi(true);
+                break;
+            }
+            case "open-store":{
+                string kind=msg.ContainsKey("kind")?Convert.ToString(msg["kind"]):"proxy";
+                currentStoreDetail=kind;
+                OpenStoreDetail(kind);
+                SyncWebUi(true);
+                break;
+            }
+            case "toggle-protection":
+                if(protection.Enabled){protection.Checked=!protection.Checked;SyncWebUi(true);}
+                break;
+            case "open-vectra":
+                try{Process.Start(new ProcessStartInfo("https://pay.vectra-pro.net/store"){UseShellExecute=true});}catch{}
+                break;
+            case "check-address":
+                if(relayReady && checkAddress.Enabled){
+                    try{relay.StandardInput.WriteLine("check");relay.StandardInput.Flush();checkAddress.Enabled=false;checkAddress.Text="Проверяем…";SyncWebUi(true);}
+                    catch(IOException){RelayEnded();}
+                }
+                break;
+            case "set-scheme":
+                if(idx>=0 && idx<4 && msg.ContainsKey("scheme")){schemes[idx].Selected=Convert.ToString(msg["scheme"]);SyncWebUi(true);}
+                break;
+            case "set-byfield":
+                if(idx>=0 && idx<4 && msg.ContainsKey("value")){byField[idx].Checked=Convert.ToBoolean(msg["value"]);SyncWebUi(true);}
+                break;
+            case "set-reveal":
+                if(idx>=0 && idx<4 && msg.ContainsKey("value")){reveal[idx].Checked=Convert.ToBoolean(msg["value"]);SyncWebUi(true);}
+                break;
+            case "set-url":
+                if(idx>=0 && idx<4 && msg.ContainsKey("value")){urls[idx].Text=Convert.ToString(msg["value"]);SyncWebUi(false);}
+                break;
+            case "set-field":
+                if(idx>=0 && idx<4 && msg.ContainsKey("field") && msg.ContainsKey("value")){
+                    string f=Convert.ToString(msg["field"]);
+                    string v=Convert.ToString(msg["value"]);
+                    if(f=="address")addresses[idx].Text=v;
+                    else if(f=="login")logins[idx].Text=v;
+                    else if(f=="password")passwords[idx].Text=v;
+                }
+                break;
+            case "paste-proxy":
+                if(idx>=0 && idx<4){paste[idx].PerformClick();SyncWebUi(true);}
+                break;
+            case "toggle-connect":
+                start.PerformClick();SyncWebUi(true);
+                break;
+            case "use-saved":{
+                string id=msg.ContainsKey("id")?Convert.ToString(msg["id"]):"";
+                var item=savedProxies.FirstOrDefault(p=>p.Id==id);
+                if(item!=null){if(relay!=null)Disconnect();schemes[0].Selected=item.Scheme;urls[0].Text=item.Line;SyncWebUi(true);}
+                break;
+            }
+            case "copy-saved":{
+                string id=msg.ContainsKey("id")?Convert.ToString(msg["id"]):"";
+                var item=savedProxies.FirstOrDefault(p=>p.Id==id);
+                if(item!=null){try{Clipboard.SetText(item.Scheme.ToLowerInvariant()+"://"+item.Line);}catch{}}
+                break;
+            }
+            case "del-saved":{
+                string id=msg.ContainsKey("id")?Convert.ToString(msg["id"]):"";
+                savedProxies.RemoveAll(p=>p.Id==id);PersistSavedProxies();RenderSavedProxies();SyncWebUi(true);
+                break;
+            }
+            case "toggle-routes":
+                ShowRouteOptions(!optionalRoutes.Visible);SyncWebUi(true);
+                break;
+            case "set-mismatch":
+                if(msg.ContainsKey("value")){allowMismatch.Checked=Convert.ToBoolean(msg["value"]);SyncWebUi(true);}
+                break;
+            case "clear-dns":
+                dns.PerformClick();SyncWebUi(true);
+                break;
+            case "patch-run":
+                if(!patchBusy && patchButton.Enabled)RunAntigravity(patchButton.Text=="Восстановить"?"restore":"patch");
+                break;
+            case "update-check":
+                RunAppUpdate("check");
+                break;
+            case "update-install":
+                RunAppUpdate("install");
+                break;
+            case "copy-text":
+                if(msg.ContainsKey("text")){try{Clipboard.SetText(Convert.ToString(msg["text"]));}catch{}}
+                break;
+            case "quit":
+                quitting=true;Close();
+                break;
+        }
     }
     void UpdatePatchUi(string state,string detail,string version,int rc,string action){
         string suffix=String.IsNullOrEmpty(version)?"":" · Antigravity "+version;
@@ -809,6 +1152,7 @@ sealed class GuardWindow : Form {
         if(storePurchasesCount!=null)storePurchasesCount.Text=storePurchases.Count>0?storePurchases.Count.ToString():"";
     }
     void OpenStoreDetail(string kind){
+        currentStoreDetail=kind;
         storeDetailHost.SuspendLayout();
         storeDetailHost.Controls.Clear();
         var backToStore=ActionButton("←  Магазин",(s,e)=>pages.SelectedIndex=4);
@@ -1051,7 +1395,10 @@ sealed class GuardWindow : Form {
         if(!relayReady)checkAddress.Enabled=false;
         else if(checkAddress.Text!="Проверяем…")checkAddress.Enabled=true;
         start.BackColor=relay!=null || retrying?ControlPaint.Light(card,.17f):accent;
-        tray.Text="Guard · "+verdict.Text;tray.Icon=routing && danger?SystemIcons.Error:routing && open?SystemIcons.Shield:routing?SystemIcons.Warning:open?SystemIcons.Information:closed?SystemIcons.Error:SystemIcons.Warning;
+        tray.Text="Guard · "+verdict.Text;
+        string mood=relay==null?"off":(routing && danger) || closed?"danger":routing && open?"proxy":routing?"warn":open?"ok":"warn";
+        SetTrayMood(mood);
+        SyncWebUi(false);
     }
     sealed class ProxyEndpoint {
         public string Scheme,Host,User,Password;
@@ -1253,16 +1600,25 @@ sealed class GuardWindow : Form {
         if(firstIssue!=null)current=current.TrimEnd('.','…')+". "+firstIssue;
         if(status.Text!=current)State(current,open==3);
     }
-    void SaveSmokeImage(string file){
+    async Task SaveSmokeImageAsync(string file){
         string folder=Environment.GetEnvironmentVariable("GUARD_UI_SCREENSHOTS");
         if(String.IsNullOrEmpty(folder))return;
-        Directory.CreateDirectory(folder);PerformLayout();Update();
+        Directory.CreateDirectory(folder);
+        if(webReady && webView!=null && !webView.IsDisposed && webView.CoreWebView2!=null){
+            SyncWebUi(true);
+            await Task.Delay(140);
+            using(var fs=File.Create(Path.Combine(folder,file)))
+                await webView.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,fs);
+            return;
+        }
+        PerformLayout();Update();
         using(var image=new Bitmap(pages.SelectedTab.Width,pages.SelectedTab.Height)){
             pages.SelectedTab.DrawToBitmap(image,new Rectangle(Point.Empty,pages.SelectedTab.Size));
             image.Save(Path.Combine(folder,file),System.Drawing.Imaging.ImageFormat.Png);
         }
     }
-    int ExerciseForm(){
+    async Task<int> ExerciseFormAsync(){
+        await Task.WhenAny(webInitDone.Task,Task.Delay(6000));
         if(!ConnectionPane.CheckMatching())return 29;
         ConnectionPane.FindOutside();
         protection.Checked=true;
@@ -1298,23 +1654,23 @@ sealed class GuardWindow : Form {
         urls[0].Text="demo:example@proxy.example:8000";
         if(urls[0].UseSystemPasswordChar)return 27;
         reveal[0].Checked=false;if(!urls[0].UseSystemPasswordChar)return 28;reveal[0].Checked=true;
-        pages.SelectedTab.PerformLayout();SaveSmokeImage("03-settings.png");
+        pages.SelectedTab.PerformLayout();await SaveSmokeImageAsync("03-settings.png");
         byField[0].Checked=true;
         if(addresses[0].Text!="proxy.example:8000" || logins[0].Text!="demo" || passwords[0].Text!="example")return 30;
         passwords[0].Text="pass@:/#";var parsed=Endpoint("http://"+urls[0].Text);
         if(!ValidFields(0) || parsed.Password!="pass@:/#" || parsed.User!="demo")return 31;
         addresses[0].Text="proxy.example";if(ValidFields(0))return 32;
         addresses[0].Text="proxy.example:8000";passwords[0].Text="example";
-        pages.SelectedTab.PerformLayout();SaveSmokeImage("06-separate-fields.png");byField[0].Checked=false;
+        pages.SelectedTab.PerformLayout();await SaveSmokeImageAsync("06-separate-fields.png");byField[0].Checked=false;
         pages.SelectedIndex=2;
         connections.Update(new[]{new ConnectionPane.Flow{Domain="api.openai.com",Status="active"},new ConnectionPane.Flow{Domain="api.anthropic.com",Status="blocked",At=DateTimeOffset.UtcNow.ToUnixTimeSeconds()}},true);
-        pages.SelectedTab.PerformLayout();SaveSmokeImage("05-connections.png");
+        pages.SelectedTab.PerformLayout();await SaveSmokeImageAsync("05-connections.png");
         pages.SelectedIndex=3;
-        pages.SelectedTab.PerformLayout();SaveSmokeImage("08-app-settings.png");
+        pages.SelectedTab.PerformLayout();await SaveSmokeImageAsync("08-app-settings.png");
         pages.SelectedIndex=4;
-        pages.SelectedTab.PerformLayout();SaveSmokeImage("09-store.png");
+        pages.SelectedTab.PerformLayout();await SaveSmokeImageAsync("09-store.png");
         OpenStoreDetail("card");
-        pages.SelectedTab.PerformLayout();SaveSmokeImage("10-store-card.png");
+        pages.SelectedTab.PerformLayout();await SaveSmokeImageAsync("10-store-card.png");
         pages.SelectedIndex=0;
         leases=json.Deserialize<Dictionary<string,Reading>>("{\"Antigravity\":{\"Until\":0,\"Reason\":\"Google: NL, IPinfo: DE\"},\"Claude\":{\"Until\":201}}");
         RenderReadings(200);
@@ -1332,16 +1688,16 @@ sealed class GuardWindow : Form {
         long demoTime=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         for(int i=1;i<names.Length;i++)leases[names[i]]=new Reading{Until=demoTime+120};
         lastResult.Text="Результат в "+DateTime.Now.ToString("HH:mm");
-        RenderReadings(demoTime);SaveSmokeImage("01-access-open.png");
+        RenderReadings(demoTime);await SaveSmokeImageAsync("01-access-open.png");
         leases["Antigravity"]=new Reading{Until=0,Reason="Google не подтвердил страну выхода."};
-        RenderReadings(demoTime);SaveSmokeImage("02-one-service-closed.png");
+        RenderReadings(demoTime);await SaveSmokeImageAsync("02-one-service-closed.png");
         if(!reasons[2].Visible || !reasons[2].Text.Contains("страну") || !status.Text.Contains("Antigravity: Google"))return 22;
         relayReady=false;protection.Checked=false;relayReady=true;RenderReadings(demoTime);
         if(!outcomes[2].Text.Contains("Есть замечание") || !checkAddress.Visible || !reasons[2].Visible)return 23;
-        SaveSmokeImage("04-proxy-only-warning.png");
+        await SaveSmokeImageAsync("04-proxy-only-warning.png");
         leases["Antigravity"]=new Reading{Until=0,HighRisk=true,Reason="IP123 отметил высокий риск для сервиса."};RenderReadings(demoTime);
         if(!outcomes[2].Text.Contains("Высокий риск") || verdict.Text!="Высокий риск")return 37;
-        SaveSmokeImage("07-proxy-only-high-risk.png");
+        await SaveSmokeImageAsync("07-proxy-only-high-risk.png");
         pages.SelectedIndex=1;
         if(byField[0].Enabled || !start.Enabled || !start.Text.Contains("Отключить"))return 34;
         start.PerformClick();if(relay!=null || !urls[0].Enabled)return 16;
@@ -1362,13 +1718,13 @@ sealed class GuardWindow : Form {
         int result=smoke?10:0;
         Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
         using(var form=new GuardWindow(data,smoke)){
-            if(smoke)form.Shown+=(s,e)=>form.BeginInvoke(new Action(()=>{
-                try{result=form.ExerciseForm();}catch{result=17;}
+            if(smoke)form.Shown+=(s,e)=>form.BeginInvoke(new Action(async ()=>{
+                try{result=await form.ExerciseFormAsync();}catch{result=17;}
                 form.quitting=true;form.Close();
             }));
             Application.Run(form);
         }
-        if(smoke && Directory.Exists(data))Directory.Delete(data,true);
+        if(smoke && Directory.Exists(data)){try{Directory.Delete(data,true);}catch{}}
         return result;
     }
 }
