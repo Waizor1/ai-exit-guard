@@ -1618,6 +1618,7 @@ sealed class GuardWindow : Form {
         }
     }
     async Task<int> ExerciseFormAsync(){
+        timer.Stop();
         await Task.WhenAny(webInitDone.Task,Task.Delay(6000));
         if(!ConnectionPane.CheckMatching())return 29;
         ConnectionPane.FindOutside();
