@@ -3,9 +3,13 @@ import SwiftUI
 struct GuardPanel: View {
     @ObservedObject var model: Monitor
     @ObservedObject private var proxy: ProxyClient
+    @ObservedObject private var store: StoreModel
+    @ObservedObject private var updater: AppUpdater
     init(model:Monitor) {
         self.model=model
         self.proxy=model.proxy
+        self.store=model.store
+        self.updater=model.updater
     }
     private func paused(_ service:String?) -> Bool {
         if proxy.paused {return true}
