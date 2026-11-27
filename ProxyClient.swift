@@ -940,7 +940,8 @@ struct ProxyEditor: View {
                 }}.frame(maxHeight:160)
                 HStack {
                     Button(proxy.measuring ? "Проверяем…" : "Проверить выходы"){proxy.checkLibrary()}.disabled(proxy.measuring)
-                    if !proxy.replacing {Button("Добавить прокси"){proxy.replacing=true}}
+                    Spacer()
+                    if !proxy.replacing {Button("Добавить прокси"){proxy.replacing=true}.buttonStyle(.borderedProminent)}
                 }
             }
             if proxy.paused && !proxy.replacing && proxy.library.entries.isEmpty {
@@ -952,7 +953,7 @@ struct ProxyEditor: View {
             } else if proxy.replacing || (proxy.expected.isEmpty && proxy.library.entries.isEmpty) {
                 if proxy.replacing && (proxy.paused || proxy.ready || !proxy.library.entries.isEmpty) {Button("Отменить добавление"){proxy.replacing=false}}
                 ProxyFields(actionTitle: "Подключить", busy: proxy.busy, apply: proxy.connect)
-                Text("Данные прокси хранятся в Связке ключей macOS.").font(.caption).foregroundStyle(.secondary)
+                Text("Данные прокси хранятся локально в зашифрованном хранилище.").font(.caption).foregroundStyle(.secondary)
             } else if proxy.ready {
                 Text("Выбранный выход   "+proxy.expected).textSelection(.enabled)
                 if let plan=proxy.plan,!plan.Profiles.isEmpty {

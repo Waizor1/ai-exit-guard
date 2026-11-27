@@ -38,9 +38,26 @@ var desktopRegionReviewed = time.Unix(1795305600, 0)
 // Each Windows status is also the lease decision. Only a successful reading
 // has an empty reason; the UI cannot independently relax a closed route.
 type desktopRoute struct {
-	Until    int64
-	Reason   string
-	HighRisk bool
+	Until        int64
+	Reason       string
+	HighRisk     bool
+	IP           string `json:",omitempty"`
+	Country      string `json:",omitempty"`
+	TraceCountry string `json:",omitempty"`
+	Network      string `json:",omitempty"`
+	Trust        string `json:",omitempty"`
+	Risk         string `json:",omitempty"`
+}
+
+func routeMeta(r result) (ip, country, traceCountry, network, trust, risk string) {
+	ip, country, traceCountry, network = r.IP, r.Country, r.TraceCountry, r.Network
+	if valid(r.Trust) {
+		trust = fmt.Sprintf("%.1f", *r.Trust)
+	}
+	if valid(r.Risk) {
+		risk = fmt.Sprintf("%.1f", *r.Risk)
+	}
+	return
 }
 
 // HighRisk describes affirmative evidence about this route for the advisory UI.
@@ -143,7 +160,8 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		reason := c.refusal(r, countries, time.Now())
 		if !c.ProxyOnly && reason != "" && !c.temporaryReading(r, service, countries, time.Now()) {
 			relay.control(service + " 0")
-			closed := desktopRoute{Reason: reason, HighRisk: c.highRisk(r, countries)}
+			ip, country, traceCountry, network, trust, risk := routeMeta(r)
+			closed := desktopRoute{Reason: reason, HighRisk: c.highRisk(r, countries), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
 			if state[service] != closed {
 				state[service] = closed
 				c.report(output, state)
@@ -168,8 +186,28 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		reason := ""
 		temporary := true
 		highRisk := false
+		var ip, country, traceCountry, network, trust, risk string
 		for _, host := range group {
 			r := rows[host]
+			mIP, mCountry, mTrace, mNet, mTrust, mRisk := routeMeta(r)
+			if ip == "" && mIP != "" {
+				ip = mIP
+			}
+			if country == "" && mCountry != "" {
+				country = mCountry
+			}
+			if traceCountry == "" && mTrace != "" {
+				traceCountry = mTrace
+			}
+			if network == "" && mNet != "" {
+				network = mNet
+			}
+			if trust == "" && mTrust != "" {
+				trust = mTrust
+			}
+			if risk == "" && mRisk != "" {
+				risk = mRisk
+			}
 			checked, err := time.Parse(time.RFC3339, r.Checked)
 			finding := c.refusal(r, countries, now)
 			if finding == "" && (err != nil || checked.After(now) || !checked.Add(maxLease).After(now)) {
@@ -194,14 +232,14 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 			// The timer in relayGate independently enforces the original deadline.
 			continue
 		}
-		state[service] = desktopRoute{Reason: reason, HighRisk: highRisk}
+		state[service] = desktopRoute{Reason: reason, HighRisk: highRisk, IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
 		if c.ProxyOnly {
 			// In advisory mode a measurement must never alter the live tunnel.
 			if reason == "" {
-				state[service] = desktopRoute{Until: until.Unix()}
+				state[service] = desktopRoute{Until: until.Unix(), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
 			}
 		} else if relay.control(fmt.Sprintf("%s %d", service, until.Unix())) == "OPEN" {
-			state[service] = desktopRoute{Until: until.Unix()}
+			state[service] = desktopRoute{Until: until.Unix(), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
 		}
 	}
 	c.report(output, state)

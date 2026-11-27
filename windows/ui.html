@@ -551,7 +551,8 @@ const ICONS = {
   card: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19"/><path d="M6.5 15h4"/></svg>',
   bagCheck: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/><path d="M9.5 14l1.7 1.7 3.3-3.4"/></svg>',
   wrench: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
-  download: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8.5 12.5L12 16l3.5-3.5"/></svg>'
+  download: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8.5 12.5L12 16l3.5-3.5"/></svg>',
+  power: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3v8"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/></svg>'
 };
 
 const COUNTRIES = ['Нидерланды','Германия','США','Финляндия','Великобритания','Сингапур','Япония'];
@@ -620,7 +621,7 @@ function renderHome() {
       : '';
     return `
       ${idx > 0 ? '<div class="divider tight"></div>' : ''}
-      <div class="row">
+      <div class="row clickable" data-open-service="${esc(s.name)}">
         <span class="sq ${m.cls}">${m.icon}</span>
         <div class="row-main">
           <div class="row-title">${esc(s.name)}</div>
@@ -628,6 +629,7 @@ function renderHome() {
         </div>
         <div class="row-right">
           <span class="pill ${esc(s.tone || 'muted')}">${badgeIcon}<span>${esc(cleanStatusText(s.status))}</span></span>
+          <span class="chev">${ICONS.chev}</span>
         </div>
       </div>
     `;
@@ -862,6 +864,15 @@ function renderSettings() {
     <div class="card">
       <div class="card-label">Система</div>
       <div class="row">
+        <span class="sq slate">${ICONS.power}</span>
+        <div class="row-main">
+          <div class="row-title">Запуск при входе</div>
+          <div class="row-sub">Автоматически запускать Guard вместе с Windows</div>
+        </div>
+        <button class="switch ${state.autostart ? 'on' : ''}" role="switch" aria-checked="${state.autostart ? 'true' : 'false'}" data-action="toggle-autostart"></button>
+      </div>
+      <div class="divider"></div>
+      <div class="row">
         <span class="sq ${p.tone === 'ok' ? 'green' : p.tone === 'warn' ? 'amber' : 'slate'}">${ICONS.wrench}</span>
         <div class="row-main">
           <div class="row-title">Патч Antigravity</div>
@@ -1012,6 +1023,54 @@ function renderStoreDetail() {
   return `${renderHeader(false, title)}${body}`;
 }
 
+function renderServiceDetail() {
+  const name = state.selectedService || 'Claude';
+  const svc = (state.services || []).find(s => s.name === name) || { name, status: 'Выключен', tone: 'muted', reason: '' };
+  const tone = svc.tone === 'ok' ? 'ok' : svc.tone === 'warn' ? 'warn' : svc.tone === 'bad' ? 'bad' : 'neutral';
+  const heroIcon = tone === 'ok' ? ICONS.heroOk : (tone === 'warn' || tone === 'bad') ? ICONS.heroWarn : ICONS.shield;
+  const rows = [];
+  rows.push(['Маршрут', svc.routeKind || 'Общий прокси']);
+  if (svc.ip) rows.push(['IP выхода', svc.ip]);
+  if (svc.traceCountry) rows.push([name === 'Antigravity' ? 'Страна у Google' : 'Страна выхода', svc.traceCountry]);
+  if (svc.country && svc.country !== svc.traceCountry) rows.push(['Страна по IPinfo', svc.country]);
+  if (svc.network) rows.push(['Сеть (IPinfo)', svc.network]);
+  if (svc.trust) rows.push(['Доверие ' + name, svc.trust + ' / 100']);
+  if (svc.risk) rows.push(['Общий риск IP123', svc.risk + ' / 100']);
+
+  return `
+    ${renderHeader(false, name)}
+    <div class="hero-card tone-${esc(tone)}">
+      <div class="hero-medallion">${heroIcon}</div>
+      <div class="hero-body">
+        <div class="hero-title">${esc(cleanStatusText(svc.status))}</div>
+        <div class="hero-sub">${esc(svc.reason || 'Проверка выходного адреса через Guard')}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Технические сведения</div>
+      ${rows.map((r, i) => `
+        ${i > 0 ? '<div class="divider tight"></div>' : ''}
+        <div class="row" style="min-height:24px">
+          <span class="row-sub" style="margin:0;flex:1">${esc(r[0])}</span>
+          <span class="row-title selectable" style="font-size:12.5px;font-variant-numeric:tabular-nums">${esc(r[1])}</span>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="card compact">
+      <div class="row clickable" data-action="open-proxy-routes" style="padding:6px 6px;">
+        <span class="sq blue">${ICONS.sliders}</span>
+        <div class="row-main">
+          <div class="row-title">Настроить отдельный прокси</div>
+          <div class="row-sub">Выделить собственный IP для ${esc(name)}</div>
+        </div>
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+    </div>
+  `;
+}
+
 function render() {
   if (!state) return;
   const active = document.activeElement;
@@ -1021,14 +1080,20 @@ function render() {
   const root = document.getElementById('root');
   let glow = '';
   if (state.page === 'store' || state.page === 'store-detail') glow = 'glow-store';
-  else if (state.page === 'home' || !state.page) {
+  else if (state.page === 'service') {
+    const svc = (state.services || []).find(s => s.name === state.selectedService);
+    if (svc && svc.tone === 'ok') glow = 'glow-ok';
+    else if (svc && svc.tone === 'warn') glow = 'glow-warn';
+    else if (svc && svc.tone === 'bad') glow = 'glow-bad';
+  } else if (state.page === 'home' || !state.page) {
     if (state.verdictTone === 'ok') glow = 'glow-ok';
     else if (state.verdictTone === 'warn') glow = 'glow-warn';
     else if (state.verdictTone === 'bad') glow = 'glow-bad';
   }
   root.className = 'app' + (glow ? ' ' + glow : '');
 
-  if (state.page === 'proxy') root.innerHTML = renderProxyPage();
+  if (state.page === 'service') root.innerHTML = renderServiceDetail();
+  else if (state.page === 'proxy') root.innerHTML = renderProxyPage();
   else if (state.page === 'connections') root.innerHTML = renderConnections();
   else if (state.page === 'settings') root.innerHTML = renderSettings();
   else if (state.page === 'store') root.innerHTML = renderStore();
@@ -1047,6 +1112,9 @@ function render() {
 document.addEventListener('click', (e) => {
   const nav = e.target.closest('[data-nav]');
   if (nav) { post({ type: 'nav', page: nav.dataset.nav }); return; }
+
+  const openSvc = e.target.closest('[data-open-service]');
+  if (openSvc) { post({ type: 'open-service', service: openSvc.dataset.openService }); return; }
 
   const openStore = e.target.closest('[data-open-store]');
   if (openStore) {

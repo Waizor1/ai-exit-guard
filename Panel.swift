@@ -423,7 +423,13 @@ private struct MainProxyCard:View {
             if !proxy.routeWarning.isEmpty {
                 Text(proxy.routeWarning).font(.caption).foregroundStyle(.orange)
             }
-            if proxy.ready {
+            if proxy.expected.isEmpty && !proxy.paused && !proxy.ready {
+                Divider()
+                ProxyFields(actionTitle: "Подключить", busy: proxy.busy, apply: proxy.connect)
+                if !proxy.message.isEmpty {
+                    Text(proxy.message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                }
+            } else if proxy.ready {
                 Divider()
                 HStack(spacing:12) {
                     VStack(alignment:.leading,spacing:3) {

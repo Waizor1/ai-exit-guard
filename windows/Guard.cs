@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -62,6 +63,8 @@ sealed class GuardWindow : Form {
     string webInitError="";
     readonly TaskCompletionSource<bool> webInitDone=new TaskCompletionSource<bool>();
     string currentStoreDetail="proxy";
+    string selectedService="";
+    bool autostartState;
     string lastWebPayload="";
     string currentTrayMood="";
     Icon customTrayIcon;
@@ -159,6 +162,30 @@ sealed class GuardWindow : Form {
         public long Until {get;set;}
         public string Reason {get;set;}
         public bool HighRisk {get;set;}
+        public string IP {get;set;}
+        public string Country {get;set;}
+        public string TraceCountry {get;set;}
+        public string Network {get;set;}
+        public string Trust {get;set;}
+        public string Risk {get;set;}
+    }
+    bool ReadAutostart(){
+        if(smokeMode)return autostartState;
+        try{
+            using(var key=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run",false)){
+                return key!=null && key.GetValue("AI Exit Guard")!=null;
+            }
+        }catch{return false;}
+    }
+    void SetAutostart(bool enable){
+        if(smokeMode){autostartState=enable;return;}
+        try{
+            using(var key=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run",true)){
+                if(key==null)return;
+                if(enable)key.SetValue("AI Exit Guard","\""+Application.ExecutablePath+"\"");
+                else key.DeleteValue("AI Exit Guard",false);
+            }
+        }catch{}
     }
     readonly Color ink=Color.FromArgb(242,244,248), muted=Color.FromArgb(148,154,176);
     readonly Color surface=Color.FromArgb(22,23,27), card=Color.FromArgb(31,33,39), cardBorder=Color.FromArgb(45,48,57);
@@ -877,13 +904,26 @@ sealed class GuardWindow : Form {
 
             var svcList=new List<object>();
             for(int i=0;i<3;i++){
+                string svcName=names[i+1];
                 string st=outcomes[i].Text;
                 string stTone="muted";
                 if(st.Contains("Можно") || st.Contains("Низкий"))stTone="ok";
                 else if(st.Contains("замечание"))stTone="warn";
                 else if(st.Contains("Закрыт") || st.Contains("Высокий"))stTone="bad";
+                Reading r=null;
+                if(leases!=null)leases.TryGetValue(svcName,out r);
+                string routeKind=String.IsNullOrWhiteSpace(urls[i+1].Text)?"Общий прокси":"Свой прокси";
+                string ipVal=r!=null && !String.IsNullOrEmpty(r.IP)?r.IP:(String.IsNullOrEmpty(pins[i+1])?(pins[0]??""):pins[i+1]);
                 svcList.Add(new Dictionary<string,object>{
-                    {"name",names[i+1]},{"status",st},{"tone",stTone},{"reason",reasons[i].Visible?reasons[i].Text:""}
+                    {"name",svcName},{"status",st},{"tone",stTone},
+                    {"reason",reasons[i].Visible?reasons[i].Text:""},
+                    {"routeKind",routeKind},
+                    {"ip",ipVal??""},
+                    {"country",r!=null?(r.Country??""):""},
+                    {"traceCountry",r!=null?(r.TraceCountry??""):""},
+                    {"network",r!=null?(r.Network??""):""},
+                    {"trust",r!=null?(r.Trust??""):""},
+                    {"risk",r!=null?(r.Risk??""):""}
                 });
             }
             var slotList=new List<object>();
@@ -915,7 +955,9 @@ sealed class GuardWindow : Form {
             else if(patchState.ForeColor.R>200)patchTone="warn";
 
             var payload=new Dictionary<string,object>{
-                {"page",CurrentPageKey()},
+                {"page",!String.IsNullOrEmpty(selectedService) && pages.SelectedIndex==0?"service":CurrentPageKey()},
+                {"selectedService",selectedService},
+                {"autostart",ReadAutostart()},
                 {"storeDetail",currentStoreDetail},
                 {"version",Application.ProductVersion},
                 {"verdict",verdict.Text},
@@ -976,12 +1018,31 @@ sealed class GuardWindow : Form {
                 webInitDone.TrySetResult(true);
                 break;
             case "nav":{
+                selectedService="";
                 string p=msg.ContainsKey("page")?Convert.ToString(msg["page"]):"home";
                 if(p=="proxy")pages.SelectedIndex=1;
                 else if(p=="connections"){pages.SelectedIndex=2;nextFlows=DateTime.MinValue;}
                 else if(p=="settings")pages.SelectedIndex=3;
                 else if(p=="store")pages.SelectedIndex=4;
                 else pages.SelectedIndex=0;
+                SyncWebUi(true);
+                break;
+            }
+            case "open-service":{
+                selectedService=msg.ContainsKey("service")?Convert.ToString(msg["service"]):"";
+                pages.SelectedIndex=0;
+                SyncWebUi(true);
+                break;
+            }
+            case "open-proxy-routes":{
+                selectedService="";
+                pages.SelectedIndex=1;
+                ShowRouteOptions(true);
+                SyncWebUi(true);
+                break;
+            }
+            case "toggle-autostart":{
+                SetAutostart(!ReadAutostart());
                 SyncWebUi(true);
                 break;
             }
@@ -1703,9 +1764,10 @@ sealed class GuardWindow : Form {
         relayReady=true;
         leases=new Dictionary<string,Reading>();
         long demoTime=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        for(int i=1;i<names.Length;i++)leases[names[i]]=new Reading{Until=demoTime+120};
+        for(int i=1;i<names.Length;i++)leases[names[i]]=new Reading{Until=demoTime+120,IP="192.0.2.1",Country="NL",TraceCountry="NL",Network="AS24940 Hetzner Online GmbH",Trust="94.5",Risk="6.0"};
         lastResult.Text="Результат в "+DateTime.Now.ToString("HH:mm");
         RenderReadings(demoTime);await SaveSmokeImageAsync("01-access-open.png");
+        selectedService="Claude";await SaveSmokeImageAsync("11-service-detail.png");selectedService="";
         leases["Antigravity"]=new Reading{Until=0,Reason="Google не подтвердил страну выхода."};
         RenderReadings(demoTime);await SaveSmokeImageAsync("02-one-service-closed.png");
         if(!reasons[2].Visible || !reasons[2].Text.Contains("страну") || !status.Text.Contains("Antigravity: Google"))return 22;
