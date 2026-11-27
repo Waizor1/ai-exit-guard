@@ -856,7 +856,7 @@ struct ProxyFields: View {
 
 struct ProxyEditor: View {
     @ObservedObject var proxy:ProxyClient
-    private let buyCountries=["Нидерланды","Германия","США","Финляндия","Великобритания","Сингапур","Япония"]
+    var openBuyProxy:(()->Void)? = nil
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             Text("Общий прокси").font(.title2.bold())
@@ -913,18 +913,15 @@ struct ProxyEditor: View {
                     Button("Отключить все прокси"){proxy.replacing=false;proxy.disconnectAll()}.disabled(proxy.busy)
                 }else{Button("Отключить прокси"){proxy.replacing=false;proxy.disconnect()}.disabled(proxy.busy)}
             }
-            VStack(alignment:.leading,spacing:8) {
-                Label("Купить прокси", systemImage: "cart").font(.headline)
-                HStack(spacing:8) {
-                    Picker("Страна", selection: $proxy.buyCountry) {
-                        ForEach(buyCountries, id: \.self) { Text($0).tag($0) }
-                    }.labelsHidden()
-                    Button("Оплатить") {}.disabled(true)
-                }
-                Text("Скоро: после оплаты прокси сам сохранится в список и подключится.").font(.caption2).foregroundStyle(.secondary)
-                    .fixedSize(horizontal:false,vertical:true)
-            }.padding(10).frame(maxWidth:.infinity,alignment:.leading)
-             .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:10))
+            if let openBuyProxy {
+                Button(action: openBuyProxy) {
+                    HStack {
+                        Label("Купить чистый прокси", systemImage: "bag").font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                    }.padding(10).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
             if !proxy.routeWarning.isEmpty {Text(proxy.routeWarning).font(.callout).foregroundStyle(.orange)}
             if proxy.busy {ProgressView().controlSize(.small)}
             if !proxy.message.isEmpty {Text(proxy.message).font(.callout).fixedSize(horizontal:false,vertical:true)}

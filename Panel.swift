@@ -28,8 +28,15 @@ struct GuardPanel: View {
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             HStack {
-                if model.permissions || model.selectedService != nil || model.proxySettings || model.showConnections {
-                    Button { if model.showConnections {model.showConnections=false} else if model.proxySettings {proxy.replacing=false;model.proxySettings=false} else if model.showHistory {model.showHistory=false} else if model.technical {model.technical=false} else {model.permissions=false;model.selectedService=nil} } label:{
+                if model.permissions || model.selectedService != nil || model.proxySettings || model.showConnections || model.store.isOpen {
+                    Button {
+                        if model.store.isOpen { model.store.goBack() }
+                        else if model.showConnections {model.showConnections=false}
+                        else if model.proxySettings {proxy.replacing=false;model.proxySettings=false}
+                        else if model.showHistory {model.showHistory=false}
+                        else if model.technical {model.technical=false}
+                        else {model.permissions=false;model.selectedService=nil}
+                    } label:{
                         Label("Назад",systemImage:"chevron.left")
                     }.buttonStyle(.plain)
                 } else {
@@ -40,14 +47,17 @@ struct GuardPanel: View {
                     Text(verbatim: appVersion).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 }
                 Spacer()
-                if !model.permissions && !model.showConnections && !model.proxySettings && model.selectedService == nil {
+                if !model.permissions && !model.showConnections && !model.proxySettings && !model.store.isOpen && model.selectedService == nil {
+                    Button { model.store.open("list") } label:{ Image(systemName:"bag").padding(4) }.buttonStyle(.plain).accessibilityLabel("Магазин")
                     Button {model.permissions=true;model.readPermissions()} label:{Image(systemName:"gearshape").padding(4)}.buttonStyle(.plain).accessibilityLabel("Настройки")
                 }
             }
-            if model.showConnections {
+            if model.store.isOpen {
+                StoreView(store:model.store,proxy:model.proxy)
+            } else if model.showConnections {
                 ConnectionsPanel(list:model.connections,proxy:model.proxy,height:model.connectionHeight)
             } else if model.proxySettings {
-                ProxyEditor(proxy:model.proxy)
+                ProxyEditor(proxy:model.proxy, openBuyProxy: { model.proxySettings=false; model.store.open("proxy") })
             } else if model.permissions {
                 Text("Настройки").font(.system(size:24,weight:.bold))
                 Button("Общий прокси"){model.proxySettings=true}.buttonStyle(.link)

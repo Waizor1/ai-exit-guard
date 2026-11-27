@@ -25,6 +25,20 @@ sealed class GuardWindow : Form {
         public string Scheme {get;set;}
         public string Line {get;set;}
     }
+    sealed class StorePurchaseItem {
+        public string Id {get;set;}
+        public string Kind {get;set;}
+        public string Title {get;set;}
+        public string Country {get;set;}
+        public string ExpiresAt {get;set;}
+        public string ProxyLine {get;set;}
+        public string CardNumber {get;set;}
+        public string CardExp {get;set;}
+        public string CardCvc {get;set;}
+        public string BillingAddress {get;set;}
+        public string AccountEmail {get;set;}
+        public string AccountPass {get;set;}
+    }
     readonly string[] names = {"Общий", "Claude", "ChatGPT", "Antigravity"};
     readonly TextBox[] urls = new TextBox[4];
     readonly ProtocolPicker[] schemes = new ProtocolPicker[4];
@@ -74,7 +88,10 @@ sealed class GuardWindow : Form {
     readonly List<SavedProxyItem> savedProxies=new List<SavedProxyItem>();
     RoundedCard savedProxiesCard;
     TableLayoutPanel savedProxiesList;
-    CountryPicker buyCountryBox;
+    readonly string savedPurchasesFile;
+    readonly List<StorePurchaseItem> storePurchases=new List<StorePurchaseItem>();
+    TableLayoutPanel storeDetailHost;
+    Label storePurchasesCount;
     Button routeOptions;
     RoundedCard optionalRoutes;
     readonly Label proxyBadge=new Label{AutoSize=true};
@@ -316,9 +333,14 @@ sealed class GuardWindow : Form {
         version.AccessibleName="Версия "+version.Text;version.Margin=new Padding(2,8,2,4);
         identity.Controls.Add(version);header.Controls.Add(identity,1,0);
         if(pages.TabCount==1){
+            var topBtns=new FlowLayoutPanel{AutoSize=true,Margin=Padding.Empty,WrapContents=false,Anchor=AnchorStyles.Right,BackColor=Color.Transparent};
+            var shopBtn=ActionButton("Магазин",(sender,e)=>pages.SelectedIndex=4);
+            shopBtn.BackColor=Color.FromArgb(24,42,68);((SoftButton)shopBtn).BorderColor=Color.FromArgb(46,84,136);shopBtn.ForeColor=Color.FromArgb(115,184,255);
+            shopBtn.Margin=new Padding(0,0,6,0);
             var gear=ActionButton("Настройки",(sender,e)=>pages.SelectedIndex=3);
-            gear.Anchor=AnchorStyles.Right;
-            header.Controls.Add(gear,2,0);
+            gear.Margin=Padding.Empty;
+            topBtns.Controls.Add(shopBtn);topBtns.Controls.Add(gear);
+            header.Controls.Add(topBtns,2,0);
         }
         grid.Controls.Add(header);
         return grid;
@@ -477,6 +499,7 @@ sealed class GuardWindow : Form {
         protection.Checked=false;
         saved=Path.Combine(dataDirectory,"routes.bin");
         savedLibrary=Path.Combine(dataDirectory,"proxy-library.bin");
+        savedPurchasesFile=Path.Combine(dataDirectory,"store-purchases.bin");
         Text="AI Exit Guard"; Font=new Font("Segoe UI",9.5F);
         captionFont=new Font("Segoe UI",8.5F);
         headingFont=new Font("Segoe UI Semibold",10F);
@@ -599,17 +622,15 @@ sealed class GuardWindow : Form {
         savedProxiesCard.Controls.Add(savedProxiesList);
         savedProxiesCard.Visible=false;
         settings.Controls.Add(savedProxiesCard);
-        var buyCard=Card();
-        buyCard.Controls.Add(Copy("Купить прокси",true));
-        var buyRow=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,6,0,4)};
-        buyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));buyRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        buyCountryBox=new CountryPicker(new[]{"Нидерланды","Германия","США","Финляндия","Великобритания","Сингапур","Япония"}){Dock=DockStyle.Fill};
-        var buyPay=ActionButton("Оплатить",(sender,e)=>{});
-        buyPay.Enabled=false;buyPay.Margin=new Padding(8,0,0,0);buyPay.MinimumSize=new Size(92,32);
-        buyRow.Controls.Add(buyCountryBox,0,0);buyRow.Controls.Add(buyPay,1,0);
-        buyCard.Controls.Add(buyRow);
-        buyCard.Controls.Add(Copy("Скоро: после оплаты прокси сам сохранится в список и подключится.",false));
-        settings.Controls.Add(buyCard);
+        var buyLinkCard=Card();buyLinkCard.Padding=new Padding(14,8,14,8);buyLinkCard.ColumnCount=3;buyLinkCard.ColumnStyles.Clear();buyLinkCard.Cursor=Cursors.Hand;
+        buyLinkCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));buyLinkCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));buyLinkCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var buyIcon=new Glyph(Mark.Globe,Color.FromArgb(77,163,255));buyIcon.Size=new Size(18,18);buyIcon.Margin=new Padding(0,3,8,0);
+        var buyLbl=Copy("Купить чистый прокси",true);buyLbl.Margin=new Padding(0,2,4,2);buyLbl.Cursor=Cursors.Hand;
+        var buyChev=Copy("›",false);buyChev.Font=new Font("Segoe UI",11F);buyChev.Anchor=AnchorStyles.Right;buyChev.Margin=new Padding(0,1,0,2);buyChev.Cursor=Cursors.Hand;
+        EventHandler openBuy=(s,e)=>OpenStoreDetail("proxy");
+        buyLinkCard.Click+=openBuy;buyIcon.Click+=openBuy;buyLbl.Click+=openBuy;buyChev.Click+=openBuy;
+        buyLinkCard.Controls.Add(buyIcon,0,0);buyLinkCard.Controls.Add(buyLbl,1,0);buyLinkCard.Controls.Add(buyChev,2,0);
+        settings.Controls.Add(buyLinkCard);
         urls[0].TextChanged+=(s,e)=>edit.Text=String.IsNullOrWhiteSpace(urls[0].Text)?"Добавить прокси":"Прокси";
         start.Anchor=AnchorStyles.Right;
         var fields=(TableLayoutPanel)paste[0].Parent;
@@ -656,6 +677,25 @@ sealed class GuardWindow : Form {
         var quitBtn=ActionButton("Завершить AI Exit Guard",(s,e)=>{quitting=true;Close();});
         quitBtn.Margin=new Padding(0,8,0,0);
         appSettings.Controls.Add(quitBtn);
+        var storePage=Page("Магазин");
+        var storeTitle=Copy("Магазин",true);storeTitle.Font=new Font("Segoe UI Semibold",15F);storeTitle.Margin=new Padding(2,2,2,6);
+        storePage.Controls.Add(storeTitle);
+        var storeGroup=Card();storeGroup.Padding=new Padding(14,4,14,4);
+        storeGroup.Controls.Add(StoreMenuRow(Mark.Globe,Color.FromArgb(77,163,255),"Чистый прокси","Статический IP без скачков и банов",null,(s,e)=>OpenStoreDetail("proxy")));
+        storeGroup.Controls.Add(new Panel{Height=1,Dock=DockStyle.Top,Margin=new Padding(0,2,0,2),BackColor=cardBorder});
+        storeGroup.Controls.Add(StoreMenuRow(Mark.Bolt,Color.FromArgb(77,163,255),"Карта Vectra Pay","Для оплаты Claude, ChatGPT и Cursor",null,(s,e)=>OpenStoreDetail("card")));
+        storeGroup.Controls.Add(new Panel{Height=1,Dock=DockStyle.Top,Margin=new Padding(0,2,0,2),BackColor=cardBorder});
+        storeGroup.Controls.Add(StoreMenuRow(Mark.Stars,Color.FromArgb(255,179,64),"Аккаунт Claude","Верифицированный · можно сразу с IP",null,(s,e)=>OpenStoreDetail("claude")));
+        storePage.Controls.Add(storeGroup);
+        var purchasesGroup=Card();purchasesGroup.Padding=new Padding(14,4,14,4);
+        storePurchasesCount=Copy("",false);storePurchasesCount.Anchor=AnchorStyles.Right;storePurchasesCount.Margin=new Padding(0,2,4,2);
+        purchasesGroup.Controls.Add(StoreMenuRow(Mark.CheckCircle,Color.FromArgb(76,224,101),"Мои покупки","Карты, аккаунты и прокси",storePurchasesCount,(s,e)=>OpenStoreDetail("purchases")));
+        storePage.Controls.Add(purchasesGroup);
+        var storeDetailPage=Page("Детали");
+        storeDetailHost=new TableLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Top,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
+        storeDetailHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        storeDetailPage.Controls.Add(storeDetailHost);
+        LoadStorePurchases();
         LoadSavedProxies();
         Shown+=(sender,e)=>{if(!smokeMode)RunAppUpdate("check");};
         pages.SelectedIndexChanged+=(sender,e)=>{if(pages.SelectedIndex==3 && !patchBusy)RunAntigravity("status");};
@@ -737,6 +777,117 @@ sealed class GuardWindow : Form {
         }catch{}
         patchBusy=false;
         UpdatePatchUi(state,detail,version,rc,action);
+    }
+    TableLayoutPanel StoreMenuRow(Mark mark,Color tint,string title,string subtitle,Label countLabel,EventHandler click){
+        var row=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=4,Margin=new Padding(0,4,0,4),Cursor=Cursors.Hand,BackColor=Color.Transparent};
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var icon=new Glyph(mark,tint);icon.Size=new Size(20,20);icon.Anchor=AnchorStyles.None;icon.Margin=new Padding(0,0,10,0);
+        var textCol=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=1,Margin=Padding.Empty,BackColor=Color.Transparent};
+        textCol.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        var t=Copy(title,true);t.Margin=new Padding(0,1,4,0);t.Cursor=Cursors.Hand;
+        var s=Copy(subtitle,false);s.Margin=new Padding(0,0,4,1);s.Cursor=Cursors.Hand;
+        textCol.Controls.Add(t);textCol.Controls.Add(s);
+        var chev=Copy("›",false);chev.Font=new Font("Segoe UI",11F);chev.Anchor=AnchorStyles.Right;chev.Margin=new Padding(2,1,0,2);chev.Cursor=Cursors.Hand;
+        row.Click+=click;icon.Click+=click;textCol.Click+=click;t.Click+=click;s.Click+=click;chev.Click+=click;
+        row.Controls.Add(icon,0,0);row.Controls.Add(textCol,1,0);
+        if(countLabel!=null){countLabel.Click+=click;row.Controls.Add(countLabel,2,0);}
+        row.Controls.Add(chev,3,0);
+        return row;
+    }
+    void LoadStorePurchases(){
+        storePurchases.Clear();
+        try{
+            if(File.Exists(savedPurchasesFile)){
+                byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(savedPurchasesFile),null,DataProtectionScope.CurrentUser);
+                var items=json.Deserialize<List<StorePurchaseItem>>(Encoding.UTF8.GetString(plain));
+                if(items!=null)storePurchases.AddRange(items);
+            }
+        }catch{}
+        if(storePurchasesCount!=null)storePurchasesCount.Text=storePurchases.Count>0?storePurchases.Count.ToString():"";
+    }
+    void OpenStoreDetail(string kind){
+        storeDetailHost.SuspendLayout();
+        storeDetailHost.Controls.Clear();
+        var backToStore=ActionButton("←  Магазин",(s,e)=>pages.SelectedIndex=4);
+        backToStore.Margin=new Padding(0,0,0,8);
+        storeDetailHost.Controls.Add(backToStore);
+        if(kind=="proxy"){
+            var h=Copy("Чистый прокси",true);h.Font=new Font("Segoe UI Semibold",15F);storeDetailHost.Controls.Add(h);
+            storeDetailHost.Controls.Add(Copy("Выделенный IP, проверенный для Claude, ChatGPT и Antigravity.",false));
+            var c=Card();
+            c.Controls.Add(Copy("Страна",false));
+            var picker=new CountryPicker(new[]{"Нидерланды","Германия","США","Финляндия","Великобритания","Сингапур","Япония"}){Dock=DockStyle.Fill,Margin=new Padding(0,4,0,8)};
+            c.Controls.Add(picker);
+            c.Controls.Add(Copy("Срок",false));
+            var termRow=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,4,0,10)};
+            termRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));termRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            var m1=ActionButton("1 месяц",(s,e)=>{});m1.Dock=DockStyle.Fill;m1.BackColor=Color.FromArgb(52,56,68);
+            var m3=ActionButton("3 месяца",(s,e)=>{});m3.Dock=DockStyle.Fill;m3.Margin=new Padding(6,0,0,0);
+            m1.Click+=(s,e)=>{m1.BackColor=Color.FromArgb(52,56,68);m3.BackColor=btnFill;m1.Invalidate();m3.Invalidate();};
+            m3.Click+=(s,e)=>{m3.BackColor=Color.FromArgb(52,56,68);m1.BackColor=btnFill;m1.Invalidate();m3.Invalidate();};
+            termRow.Controls.Add(m1,0,0);termRow.Controls.Add(m3,1,0);
+            c.Controls.Add(termRow);
+            var pay=ActionButton("Оплатить · Скоро",(s,e)=>{});pay.Dock=DockStyle.Fill;pay.Enabled=false;pay.MinimumSize=new Size(0,34);
+            c.Controls.Add(pay);
+            c.Controls.Add(Copy("После оплаты прокси сам добавится в Guard и подключится.",false));
+            storeDetailHost.Controls.Add(c);
+        }else if(kind=="card"){
+            var h=Copy("Карта Vectra Pay",true);h.Font=new Font("Segoe UI Semibold",15F);storeDetailHost.Controls.Add(h);
+            storeDetailHost.Controls.Add(Copy("Предоплаченная Visa с готовым Billing Address под оплату ИИ.",false));
+            var c=Card();
+            c.Controls.Add(Copy("Номинал",false));
+            var amtRow=new TableLayoutPanel{AutoSize=true,Dock=DockStyle.Fill,ColumnCount=3,Margin=new Padding(0,4,0,10)};
+            amtRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,33.3f));amtRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,33.3f));amtRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,33.4f));
+            var a20=ActionButton("$20",(s,e)=>{});a20.Dock=DockStyle.Fill;a20.BackColor=Color.FromArgb(52,56,68);
+            var a100=ActionButton("$100",(s,e)=>{});a100.Dock=DockStyle.Fill;a100.Margin=new Padding(6,0,0,0);
+            var a200=ActionButton("$200",(s,e)=>{});a200.Dock=DockStyle.Fill;a200.Margin=new Padding(6,0,0,0);
+            Action<Button> pickAmt=sel=>{foreach(var b in new[]{a20,a100,a200}){b.BackColor=b==sel?Color.FromArgb(52,56,68):btnFill;b.Invalidate();}};
+            a20.Click+=(s,e)=>pickAmt(a20);a100.Click+=(s,e)=>pickAmt(a100);a200.Click+=(s,e)=>pickAmt(a200);
+            amtRow.Controls.Add(a20,0,0);amtRow.Controls.Add(a100,1,0);amtRow.Controls.Add(a200,2,0);
+            c.Controls.Add(amtRow);
+            var pay=ActionButton("Выпустить карту · Скоро",(s,e)=>{});pay.Dock=DockStyle.Fill;pay.Enabled=false;pay.MinimumSize=new Size(0,34);
+            c.Controls.Add(pay);
+            c.Controls.Add(Copy("Карта появится в «Мои покупки» с копированием в 1 клик.",false));
+            storeDetailHost.Controls.Add(c);
+        }else if(kind=="claude"){
+            var h=Copy("Аккаунт Claude",true);h.Font=new Font("Segoe UI Semibold",15F);storeDetailHost.Controls.Add(h);
+            storeDetailHost.Controls.Add(Copy("Верифицированный аккаунт с доступом к почте.",false));
+            var c=Card();
+            var withIp=new DarkCheckBox{Text="Добавить личный IP (привяжется к Claude автоматически)",Checked=true,Dock=DockStyle.Fill,Margin=new Padding(0,4,0,10)};
+            c.Controls.Add(withIp);
+            var pay=ActionButton("Оплатить · Скоро",(s,e)=>{});pay.Dock=DockStyle.Fill;pay.Enabled=false;pay.MinimumSize=new Size(0,34);
+            c.Controls.Add(pay);
+            c.Controls.Add(Copy("Логин, пароль и почта сохранятся в «Мои покупки».",false));
+            storeDetailHost.Controls.Add(c);
+        }else{
+            var h=Copy("Мои покупки",true);h.Font=new Font("Segoe UI Semibold",15F);storeDetailHost.Controls.Add(h);
+            if(storePurchases.Count==0){
+                var empty=Card();
+                empty.Controls.Add(Copy("Покупок пока нет",true));
+                empty.Controls.Add(Copy("Купленные прокси, карты Vectra Pay и аккаунты появятся здесь и сохранятся зашифрованно.",false));
+                storeDetailHost.Controls.Add(empty);
+            }else{
+                foreach(var entry in storePurchases){
+                    var item=entry;
+                    var c=Card();
+                    c.Controls.Add(Copy(item.Title??"Покупка",true));
+                    if(!String.IsNullOrEmpty(item.CardNumber)){
+                        var copyNum=ActionButton("Копировать номер карты",(s,e)=>{try{Clipboard.SetText(item.CardNumber);}catch{}});
+                        c.Controls.Add(copyNum);
+                    }
+                    if(!String.IsNullOrEmpty(item.ProxyLine)){
+                        var copyProxy=ActionButton("Копировать прокси",(s,e)=>{try{Clipboard.SetText(item.ProxyLine);}catch{}});
+                        c.Controls.Add(copyProxy);
+                    }
+                    storeDetailHost.Controls.Add(c);
+                }
+            }
+        }
+        storeDetailHost.ResumeLayout(true);
+        pages.SelectedIndex=5;
     }
     void LoadSavedProxies(){
         savedProxies.Clear();
@@ -1160,6 +1311,10 @@ sealed class GuardWindow : Form {
         pages.SelectedTab.PerformLayout();SaveSmokeImage("05-connections.png");
         pages.SelectedIndex=3;
         pages.SelectedTab.PerformLayout();SaveSmokeImage("08-app-settings.png");
+        pages.SelectedIndex=4;
+        pages.SelectedTab.PerformLayout();SaveSmokeImage("09-store.png");
+        OpenStoreDetail("card");
+        pages.SelectedTab.PerformLayout();SaveSmokeImage("10-store-card.png");
         pages.SelectedIndex=0;
         leases=json.Deserialize<Dictionary<string,Reading>>("{\"Antigravity\":{\"Until\":0,\"Reason\":\"Google: NL, IPinfo: DE\"},\"Claude\":{\"Until\":201}}");
         RenderReadings(200);

@@ -59,6 +59,7 @@ final class Monitor: NSObject, ObservableObject {
     let proxy=ProxyClient()
     let antigravity=AntigravityPatch()
     let updater=AppUpdater()
+    let store=StoreModel()
     var killSwitch:KillSwitch { proxy.domainRoutes }
     @Published var proxySettings=false
     @Published var showConnections=false
@@ -919,7 +920,7 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         if let screen=display {
             model.connectionHeight=min(420,max(90,anchor.minY-screen.visibleFrame.minY-210))
         }
-        model.selectedService=nil;model.technical=false;model.showHistory=false;model.permissions=false;model.proxySettings=false;model.showConnections=false
+        model.selectedService=nil;model.technical=false;model.showHistory=false;model.permissions=false;model.proxySettings=false;model.showConnections=false;model.store.screen=nil
         model.readPermissions()
         model.killSwitch.refresh()
         position()
