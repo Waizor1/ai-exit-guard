@@ -59,6 +59,7 @@ sealed class GuardWindow : Form {
     [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr hIcon);
     WebView2 webView;
     bool webReady;
+    string webInitError="";
     readonly TaskCompletionSource<bool> webInitDone=new TaskCompletionSource<bool>();
     string currentStoreDetail="proxy";
     string lastWebPayload="";
@@ -842,7 +843,8 @@ sealed class GuardWindow : Form {
             using(var reader=new StreamReader(stream,Encoding.UTF8))
                 html=reader.ReadToEnd();
             webView.NavigateToString(html);
-        }catch{
+        }catch(Exception ex){
+            webInitError=ex.ToString();
             if(webView!=null && !webView.IsDisposed)webView.Visible=false;
             webInitDone.TrySetResult(false);
         }
@@ -1628,7 +1630,12 @@ sealed class GuardWindow : Form {
     }
     async Task<int> ExerciseFormAsync(){
         timer.Stop();
-        await Task.WhenAny(webInitDone.Task,Task.Delay(6000));
+        await Task.WhenAny(webInitDone.Task,Task.Delay(18000));
+        string shotDir=Environment.GetEnvironmentVariable("GUARD_UI_SCREENSHOTS");
+        if(!String.IsNullOrEmpty(shotDir) && !webReady){
+            try{Directory.CreateDirectory(shotDir);File.WriteAllText(Path.Combine(shotDir,"webview2-error.txt"),String.IsNullOrEmpty(webInitError)?"WebView2 init timed out without ready message":webInitError);}catch{}
+            return 38;
+        }
         if(!ConnectionPane.CheckMatching())return 29;
         ConnectionPane.FindOutside();
         protection.Checked=true;

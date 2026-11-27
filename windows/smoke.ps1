@@ -3,8 +3,13 @@ $dir=(Resolve-Path (Join-Path $PSScriptRoot '..\dist\windows-x64')).Path
 if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable CI runner'}
 & {
     $ui=Start-Process (Join-Path $dir 'AI Exit Guard.exe') -ArgumentList '--smoke-test' -PassThru
-    if(!$ui.WaitForExit(25000)){$ui.Kill();throw 'GUI smoke timed out'}
-    if($ui.ExitCode -ne 0){throw "Native form test failed at stage $($ui.ExitCode)"}
+    if(!$ui.WaitForExit(45000)){$ui.Kill();throw 'GUI smoke timed out'}
+    if($ui.ExitCode -ne 0){
+        if($env:GUARD_UI_SCREENSHOTS -and (Test-Path (Join-Path $env:GUARD_UI_SCREENSHOTS 'webview2-error.txt'))){
+            Write-Host (Get-Content -Raw (Join-Path $env:GUARD_UI_SCREENSHOTS 'webview2-error.txt'))
+        }
+        throw "Native form test failed at stage $($ui.ExitCode)"
+    }
     $profile=Get-Content -Raw (Join-Path $dir 'AI Exit Guard.pbprofile') | ConvertFrom-Json
     if($profile.ProxyConfigs[0].Host -ne '127.0.0.1' -or $profile.ProxyConfigs[0].Port -ne '39178'){throw 'Wrong relay'}
     $agRaw=& (Join-Path $dir 'guard-core.exe') antigravity-status
