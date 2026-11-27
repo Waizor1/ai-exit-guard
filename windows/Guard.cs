@@ -148,9 +148,9 @@ sealed class GuardWindow : Form {
             if(DwmSetWindowAttribute(Handle,20,ref dark,4)!=0)DwmSetWindowAttribute(Handle,19,ref dark,4);
             int corner=2; // DWMWCP_ROUND on Windows 11
             DwmSetWindowAttribute(Handle,33,ref corner,4);
-            int caption=0x00282626; // #262628 seamless title bar matching macOS surface
+            int caption=0x00161211; // #111216 seamless Obsidian title bar
             DwmSetWindowAttribute(Handle,35,ref caption,4);
-            int border=0x003A3838; // subtle hairline window rim
+            int border=0x002B2624; // subtle hairline window rim
             DwmSetWindowAttribute(Handle,34,ref border,4);
         }catch{}
     }
@@ -823,7 +823,7 @@ sealed class GuardWindow : Form {
     }
     async void InitWebUi(string dataDirectory){
         try{
-            webView=new WebView2{Dock=DockStyle.Fill,Visible=false,DefaultBackgroundColor=Color.FromArgb(38,38,40)};
+            webView=new WebView2{Dock=DockStyle.Fill,Visible=false,DefaultBackgroundColor=Color.FromArgb(17,18,22)};
             Controls.Add(webView);
             webView.BringToFront();
             string udfs=Path.Combine(dataDirectory,"webview2");

@@ -7,22 +7,23 @@
 <style>
   :root {
     color-scheme: dark;
-    /* macOS Sequoia dark popover palette */
-    --bg: #262628;
-    --surface: rgba(255, 255, 255, 0.055);
-    --surface-hover: rgba(255, 255, 255, 0.085);
-    --inset: rgba(0, 0, 0, 0.28);
-    --hairline: rgba(255, 255, 255, 0.08);
-    --rim: rgba(255, 255, 255, 0.05);
-    --ink: rgba(255, 255, 255, 0.92);
-    --muted: rgba(255, 255, 255, 0.54);
-    --dim: rgba(255, 255, 255, 0.34);
-    --blue: #0a84ff;
-    --blue-hover: #2193ff;
-    --green: #32d74b;
-    --amber: #ff9f0a;
-    --red: #ff453a;
-    --radius: 13px;
+    /* Obsidian Glass palette — crisp, high-contrast depth for Windows */
+    --bg: #111216;
+    --card: #191b21;
+    --card-hover: #1e2129;
+    --inset: #111216;
+    --border: rgba(255, 255, 255, 0.075);
+    --border-strong: rgba(255, 255, 255, 0.12);
+    --hairline: rgba(255, 255, 255, 0.06);
+    --ink: #f3f4f6;
+    --muted: #8890a2;
+    --dim: #636b7d;
+    --blue: #3b82f6;
+    --blue-light: #93c5fd;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --radius: 12px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; }
   input, textarea, .selectable { -webkit-user-select: text; user-select: text; }
@@ -39,23 +40,37 @@
   }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 
   .app {
-    padding: 14px 16px 16px;
+    padding: 13px 15px 15px;
     display: flex;
     flex-direction: column;
-    gap: 11px;
+    gap: 10px;
     min-height: 100vh;
+    background: var(--bg);
+    background-image: radial-gradient(ellipse 85% 32% at 50% -6%, rgba(59, 130, 246, 0.11), transparent 72%);
+  }
+  .app.glow-ok {
+    background-image: radial-gradient(ellipse 85% 32% at 50% -6%, rgba(52, 211, 153, 0.14), transparent 72%);
+  }
+  .app.glow-warn {
+    background-image: radial-gradient(ellipse 85% 32% at 50% -6%, rgba(245, 158, 11, 0.14), transparent 72%);
+  }
+  .app.glow-bad {
+    background-image: radial-gradient(ellipse 85% 32% at 50% -6%, rgba(248, 113, 113, 0.15), transparent 72%);
+  }
+  .app.glow-store {
+    background-image: radial-gradient(ellipse 85% 32% at 50% -6%, rgba(59, 130, 246, 0.15), transparent 72%);
   }
 
-  /* Header — exact macOS popover top bar */
+  /* Header */
   .topbar {
     display: flex;
     align-items: center;
     gap: 7px;
-    min-height: 26px;
+    min-height: 28px;
   }
   .back-btn {
     display: inline-flex;
@@ -63,102 +78,170 @@
     gap: 3px;
     background: none;
     border: none;
-    color: var(--ink);
+    color: var(--blue-light);
     font: inherit;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
-    padding: 3px 6px 3px 2px;
+    padding: 4px 7px 4px 3px;
     margin-left: -4px;
     border-radius: 7px;
-    transition: background 0.14s ease;
-  }
-  .back-btn:hover { background: rgba(255,255,255,0.08); }
-  .brand-icon { color: var(--muted); display: inline-flex; align-items: center; }
-  .brand-title { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
-  .brand-ver { font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 1px; }
-  .spacer { flex: 1; }
-  .icon-btn {
-    width: 28px; height: 28px;
-    border-radius: 7px;
-    border: none;
-    background: transparent;
-    color: rgba(255,255,255,0.84);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
     transition: background 0.14s ease, color 0.14s ease;
   }
-  .icon-btn:hover { background: rgba(255,255,255,0.09); color: #fff; }
-  .icon-btn:active { background: rgba(255,255,255,0.14); }
+  .back-btn:hover { background: rgba(59,130,246,0.12); color: #bfdbfe; }
+  .brand-mark {
+    width: 24px; height: 24px;
+    border-radius: 7px;
+    background: linear-gradient(180deg, #212636 0%, #131620 100%);
+    border: 1px solid rgba(255,255,255,0.12);
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+    flex-shrink: 0;
+  }
+  .brand-title { font-size: 13.5px; font-weight: 600; letter-spacing: -0.015em; color: #f5f7fa; }
+  .brand-ver {
+    font-size: 10.5px; font-weight: 500; color: var(--muted);
+    background: rgba(255,255,255,0.055);
+    border: 1px solid rgba(255,255,255,0.06);
+    padding: 1px 6px; border-radius: 5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .spacer { flex: 1; }
   .store-pill {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    height: 26px;
-    padding: 0 10px;
+    height: 27px;
+    padding: 0 11px;
     border-radius: 999px;
-    border: 1px solid rgba(10, 132, 255, 0.24);
-    background: rgba(10, 132, 255, 0.14);
-    color: #5eb2ff;
+    background: linear-gradient(180deg, rgba(59,130,246,0.22) 0%, rgba(37,99,235,0.15) 100%);
+    border: 1px solid rgba(96, 165, 250, 0.32);
+    color: var(--blue-light);
     font: inherit;
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.14s ease, border-color 0.14s ease;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+    transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
   }
-  .store-pill:hover { background: rgba(10, 132, 255, 0.22); border-color: rgba(10, 132, 255, 0.38); color: #82c4ff; }
-  .store-pill:active { background: rgba(10, 132, 255, 0.28); }
+  .store-pill:hover {
+    background: linear-gradient(180deg, rgba(59,130,246,0.30) 0%, rgba(37,99,235,0.22) 100%);
+    border-color: rgba(96, 165, 250, 0.48);
+    color: #dbeafe;
+  }
+  .icon-btn {
+    width: 27px; height: 27px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.05);
+    color: #cbd2df;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,0.10); border-color: rgba(255,255,255,0.14); color: #fff; }
 
-  /* Hero */
-  .hero { padding: 4px 2px 3px; display: flex; flex-direction: column; gap: 4px; }
-  .hero-row { display: flex; align-items: center; gap: 9px; }
-  .hero-title { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
-  .hero-sub { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
-  .hero.tone-ok .hero-icon, .hero.tone-ok .hero-title { color: var(--green); }
-  .hero.tone-warn .hero-icon, .hero.tone-warn .hero-title { color: var(--amber); }
-  .hero.tone-bad .hero-icon, .hero.tone-bad .hero-title { color: var(--red); }
-  .hero.tone-neutral .hero-icon, .hero.tone-neutral .hero-title { color: var(--ink); }
-
-  /* Borderless soft macOS grouped surfaces */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--rim);
+  /* Hero Status Card */
+  .hero-card {
     border-radius: var(--radius);
-    padding: 11px 14px;
+    padding: 12px 13px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, #191b21 100%);
+    border: 1px solid var(--border-strong);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  .hero-card.tone-ok {
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.11) 0%, rgba(25, 27, 33, 0.94) 100%);
+    border-color: rgba(52, 211, 153, 0.25);
+  }
+  .hero-card.tone-warn {
+    background: linear-gradient(180deg, rgba(245, 158, 11, 0.12) 0%, rgba(25, 27, 33, 0.94) 100%);
+    border-color: rgba(245, 158, 11, 0.26);
+  }
+  .hero-card.tone-bad {
+    background: linear-gradient(180deg, rgba(248, 113, 113, 0.13) 0%, rgba(25, 27, 33, 0.94) 100%);
+    border-color: rgba(248, 113, 113, 0.28);
+  }
+  .hero-medallion {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--ink);
+  }
+  .hero-card.tone-ok .hero-medallion {
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.24) 0%, rgba(16, 185, 129, 0.14) 100%);
+    border-color: rgba(52, 211, 153, 0.36);
+    color: var(--green);
+    box-shadow: 0 0 18px rgba(52, 211, 153, 0.20);
+  }
+  .hero-card.tone-warn .hero-medallion {
+    background: linear-gradient(180deg, rgba(245, 158, 11, 0.24) 0%, rgba(217, 119, 6, 0.14) 100%);
+    border-color: rgba(245, 158, 11, 0.36);
+    color: var(--amber);
+    box-shadow: 0 0 18px rgba(245, 158, 11, 0.18);
+  }
+  .hero-card.tone-bad .hero-medallion {
+    background: linear-gradient(180deg, rgba(248, 113, 113, 0.24) 0%, rgba(220, 38, 38, 0.14) 100%);
+    border-color: rgba(248, 113, 113, 0.38);
+    color: var(--red);
+    box-shadow: 0 0 18px rgba(248, 113, 113, 0.20);
+  }
+  .hero-body { min-width: 0; flex: 1; }
+  .hero-title { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.22; color: #f8fafc; }
+  .hero-card.tone-ok .hero-title { color: #ecfdf5; }
+  .hero-card.tone-warn .hero-title { color: #fffbeb; }
+  .hero-card.tone-bad .hero-title { color: #fef2f2; }
+  .hero-sub { font-size: 11.5px; color: #9ca3b5; margin-top: 2px; line-height: 1.38; }
+
+  /* Elevated Obsidian Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 11px 13px;
     display: flex;
     flex-direction: column;
     gap: 0;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }
-  .card.compact { padding: 5px 14px; }
+  .card.compact { padding: 6px 13px; }
   .card.vectra {
-    background: rgba(64, 128, 220, 0.13);
-    border-color: rgba(100, 160, 255, 0.14);
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.18) 0%, #181c26 65%);
+    border-color: rgba(96, 165, 250, 0.22);
   }
   .card.update {
-    background: rgba(10, 132, 255, 0.15);
-    border-color: rgba(10, 132, 255, 0.22);
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.20) 0%, #191d27 70%);
+    border-color: rgba(96, 165, 250, 0.28);
   }
   .card-label {
-    font-size: 11.5px;
-    font-weight: 500;
-    color: var(--muted);
-    margin-bottom: 7px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #71788a;
+    margin-bottom: 8px;
   }
   .divider {
     height: 1px;
     background: var(--hairline);
-    margin: 9px 0;
+    margin: 8px 0;
   }
   .divider.tight { margin: 7px 0; }
 
-  /* Rows */
+  /* Rows & Squircle Badges */
   .row {
     display: flex;
     align-items: center;
     gap: 10px;
-    min-height: 26px;
+    min-height: 28px;
   }
   .row.clickable {
     cursor: pointer;
@@ -167,104 +250,163 @@
     padding: 4px 6px;
     transition: background 0.12s ease;
   }
-  .row.clickable:hover { background: rgba(255,255,255,0.055); }
-  .row-icon { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .row.clickable:hover { background: rgba(255,255,255,0.045); }
+  .sq {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .sq.amber { background: rgba(245, 158, 11, 0.13); border-color: rgba(245, 158, 11, 0.22); }
+  .sq.teal { background: rgba(45, 212, 191, 0.13); border-color: rgba(45, 212, 191, 0.22); }
+  .sq.violet { background: rgba(167, 139, 250, 0.14); border-color: rgba(167, 139, 250, 0.24); }
+  .sq.blue { background: rgba(59, 130, 246, 0.14); border-color: rgba(59, 130, 246, 0.25); color: #60a5fa; }
+  .sq.slate { background: rgba(255, 255, 255, 0.055); border-color: rgba(255, 255, 255, 0.09); color: #cbd2df; }
+  .sq.green { background: rgba(52, 211, 153, 0.14); border-color: rgba(52, 211, 153, 0.25); color: var(--green); }
   .row-main { flex: 1; min-width: 0; }
   .row-title { font-size: 13px; font-weight: 500; color: var(--ink); letter-spacing: -0.005em; }
-  .row-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; line-height: 1.38; }
-  .row-right { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); flex-shrink: 0; }
+  .row-sub { font-size: 11.5px; color: var(--muted); margin-top: 1.5px; line-height: 1.36; }
+  .row-right { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); flex-shrink: 0; }
   .chev { color: var(--dim); display: inline-flex; align-items: center; }
 
-  .svc-status { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 500; }
-  .svc-status.ok { color: var(--green); }
-  .svc-status.warn { color: var(--amber); }
-  .svc-status.bad { color: var(--red); }
-  .svc-status.muted { color: var(--muted); font-weight: 400; }
-  .svc-reason { font-size: 11.5px; color: var(--muted); margin: 3px 0 0 30px; line-height: 1.35; }
+  /* Status Pills */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill.ok {
+    background: rgba(52, 211, 153, 0.12);
+    border: 1px solid rgba(52, 211, 153, 0.24);
+    color: var(--green);
+  }
+  .pill.warn {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.26);
+    color: var(--amber);
+  }
+  .pill.bad {
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.26);
+    color: var(--red);
+  }
+  .pill.muted {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    color: #a6adbe;
+  }
 
-  /* Native macOS Toggle Switch */
+  /* Toggle Switch — crisp white thumb always */
   .switch {
     position: relative;
     width: 38px; height: 22px;
     border-radius: 999px;
-    background: rgba(255,255,255,0.18);
-    border: none;
+    background: rgba(255,255,255,0.14);
+    border: 1px solid rgba(255,255,255,0.08);
     cursor: pointer;
-    transition: background 0.18s ease;
+    transition: background 0.18s ease, border-color 0.18s ease;
     flex-shrink: 0;
   }
-  .switch.on { background: var(--blue); }
-  .switch:disabled { opacity: 0.65; cursor: default; }
+  .switch.on {
+    background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+    border-color: rgba(96, 165, 250, 0.40);
+  }
+  .switch:disabled { cursor: default; filter: saturate(0.85); }
   .switch::after {
     content: '';
     position: absolute;
     top: 2px; left: 2px;
-    width: 18px; height: 18px;
+    width: 16px; height: 16px;
     border-radius: 50%;
-    background: #fff;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.32);
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.40);
     transition: transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
   }
   .switch.on::after { transform: translateX(16px); }
 
-  /* macOS Buttons — soft translucent fills, crisp Apple Blue primary */
+  /* Buttons */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    border: none;
-    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(255, 255, 255, 0.08);
     color: var(--ink);
     font: inherit;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 500;
     padding: 6px 13px;
     border-radius: 8px;
     cursor: pointer;
-    box-shadow: inset 0 0.5px 0 rgba(255,255,255,0.10);
-    transition: background 0.13s ease, opacity 0.13s ease;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    transition: background 0.13s ease, border-color 0.13s ease;
     white-space: nowrap;
   }
-  .btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
-  .btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.21); }
-  .btn:disabled { opacity: 0.42; cursor: default; }
+  .btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); border-color: rgba(255,255,255,0.16); }
+  .btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.18); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
   .btn.primary {
-    background: var(--blue);
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 1px 2px rgba(0,0,0,0.22);
+    background: linear-gradient(180deg, #2589ff 0%, #0a74f0 100%);
+    border-color: rgba(96, 165, 250, 0.45);
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(10, 132, 255, 0.30), inset 0 1px 0 rgba(255,255,255,0.24);
   }
-  .btn.primary:hover:not(:disabled) { background: var(--blue-hover); }
-  .btn.subtle { background: rgba(255,255,255,0.11); }
-  .btn.subtle:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+  .btn.primary:hover:not(:disabled) {
+    background: linear-gradient(180deg, #3b96ff 0%, #147ef8 100%);
+  }
+  .btn.soon {
+    width: 100%;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    color: #9ca3b5;
+    opacity: 1;
+    cursor: default;
+  }
   .btn.full { width: 100%; padding: 8px 14px; }
   .btn.sm { font-size: 12px; padding: 5px 11px; border-radius: 7px; }
-  .btn.danger-ghost { background: rgba(255, 255, 255, 0.08); color: var(--ink); }
-  .btn.danger-ghost:hover:not(:disabled) { background: rgba(255, 69, 58, 0.22); color: #ff6961; }
+  .btn.danger-ghost {
+    background: rgba(248, 113, 113, 0.08);
+    border-color: rgba(248, 113, 113, 0.18);
+    color: #fca5a5;
+  }
+  .btn.danger-ghost:hover:not(:disabled) {
+    background: rgba(248, 113, 113, 0.18);
+    border-color: rgba(248, 113, 113, 0.32);
+    color: #fecaca;
+  }
 
   /* Footer */
   .footer {
     margin-top: auto;
-    padding-top: 6px;
+    padding-top: 4px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
   }
-  .footer-note { font-size: 12px; color: var(--muted); }
+  .footer-note { font-size: 11.5px; color: #71788a; }
 
   /* Page titles */
-  .page-title { font-size: 21px; font-weight: 600; letter-spacing: -0.025em; margin: 2px 0 3px; }
-  .page-sub { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; line-height: 1.4; }
+  .page-title { font-size: 19px; font-weight: 600; letter-spacing: -0.025em; margin: 2px 0 2px; color: #f8fafc; }
+  .page-sub { font-size: 12px; color: var(--muted); margin-bottom: 2px; line-height: 1.4; }
 
-  /* macOS Segmented Control */
+  /* Segmented Control */
   .seg {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     background: var(--inset);
-    border-radius: 8px;
-    padding: 2.5px;
-    gap: 2px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 3px;
+    gap: 3px;
     margin: 6px 0 10px;
   }
   .seg.cols-2 { grid-template-columns: repeat(2, 1fr); }
@@ -281,9 +423,9 @@
     transition: background 0.14s ease, color 0.14s ease;
   }
   .seg button.active {
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.28), inset 0 0.5px 0 rgba(255,255,255,0.14);
+    background: #272b35;
+    color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.10);
   }
   .seg button:disabled { opacity: 0.45; cursor: default; }
 
@@ -292,7 +434,7 @@
   .input, .select {
     width: 100%;
     background: var(--inset);
-    border: 1px solid rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.09);
     border-radius: 8px;
     color: var(--ink);
     font: inherit;
@@ -303,12 +445,12 @@
   }
   .input:focus, .select:focus {
     border-color: var(--blue);
-    box-shadow: 0 0 0 2.5px rgba(10, 132, 255, 0.25);
+    box-shadow: 0 0 0 2.5px rgba(59, 130, 246, 0.25);
   }
   .input:disabled, .select:disabled { opacity: 0.5; }
-  .select option { background: #262628; color: #f5f5f7; }
+  .select option { background: #191b21; color: #f3f4f6; }
 
-  /* Custom macOS Checkbox (zero browser white-box artifact) */
+  /* Custom Obsidian Checkbox */
   .check-row {
     display: inline-flex;
     align-items: center;
@@ -322,7 +464,7 @@
     appearance: none;
     width: 15px; height: 15px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--inset);
     border: 1px solid rgba(255, 255, 255, 0.22);
     display: inline-grid;
     place-content: center;
@@ -349,7 +491,8 @@
   .feedback {
     font-size: 12px;
     color: var(--amber);
-    background: rgba(255, 159, 10, 0.12);
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.24);
     border-radius: 9px;
     padding: 8px 11px;
   }
@@ -359,14 +502,14 @@
   .flow-list { display: flex; flex-direction: column; gap: 0; margin-top: 8px; }
   .flow-row {
     display: grid;
-    grid-template-columns: 112px 1fr 56px;
+    grid-template-columns: 118px 1fr 56px;
     gap: 8px;
     align-items: center;
     padding: 7px 0;
     border-top: 1px solid var(--hairline);
     font-size: 12px;
   }
-  .flow-row.head { border-top: none; font-size: 11px; color: var(--muted); font-weight: 500; padding-top: 2px; }
+  .flow-row.head { border-top: none; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: #71788a; font-weight: 600; padding-top: 2px; }
   .flow-domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
   .flow-time { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
 
@@ -375,18 +518,10 @@
   .saved-row + .saved-row { border-top: 1px solid var(--hairline); }
   .saved-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
   .badge-count {
-    font-size: 11.5px; font-weight: 500; color: var(--muted);
-    background: rgba(255,255,255,0.09);
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    background: rgba(255,255,255,0.08);
     padding: 1px 7px; border-radius: 999px;
   }
-  .collapsible-btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: var(--surface); border: 1px solid var(--rim);
-    color: var(--ink); font: inherit; font-size: 12.5px; font-weight: 500;
-    padding: 7px 12px; border-radius: 9px; cursor: pointer; align-self: flex-start;
-    transition: background 0.13s ease;
-  }
-  .collapsible-btn:hover { background: var(--surface-hover); }
   .stack-gap { display: flex; flex-direction: column; gap: 10px; }
 </style>
 </head>
@@ -394,26 +529,29 @@
 <div id="root" class="app"></div>
 <script>
 const ICONS = {
-  shield: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 2.8L4.6 5.5C4.1 5.7 3.8 6.2 3.8 6.7V11.5C3.8 16 7.2 19.7 12 21.2C16.8 19.7 20.2 16 20.2 11.5V6.7C20.2 6.2 19.9 5.7 19.4 5.5L12 2.8Z"/><circle cx="12" cy="11.6" r="2.4" fill="currentColor" stroke="none"/></svg>',
-  bag: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
-  gear: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
-  back: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  brand: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2.8L4.6 5.5C4.1 5.7 3.8 6.2 3.8 6.7V11.5C3.8 16 7.2 19.7 12 21.2C16.8 19.7 20.2 16 20.2 11.5V6.7C20.2 6.2 19.9 5.7 19.4 5.5L12 2.8Z" stroke="#eef2f8" stroke-width="2.1" stroke-linejoin="round"/><circle cx="12" cy="11.6" r="2.7" fill="#34d399"/></svg>',
+  shield: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 2.8L4.6 5.5C4.1 5.7 3.8 6.2 3.8 6.7V11.5C3.8 16 7.2 19.7 12 21.2C16.8 19.7 20.2 16 20.2 11.5V6.7C20.2 6.2 19.9 5.7 19.4 5.5L12 2.8Z"/><circle cx="12" cy="11.6" r="2.4" fill="currentColor" stroke="none"/></svg>',
+  bag: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+  gear: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  back: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   chev: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
-  globe: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4.2" ry="9"/><path d="M3.5 9h17M3.5 15h17"/></svg>',
-  arrows: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h15M15 5l4 4-4 4"/><path d="M20 15H5M9 11l-4 4 4 4"/></svg>',
-  sun: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.3" fill="#ff9f0a"/><path d="M12 2.8v2.5M12 18.7v2.5M2.8 12h2.5M18.7 12h2.5M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8" stroke="#ff9f0a" stroke-width="1.9" stroke-linecap="round"/></svg>',
-  chat: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 6.5C4 5.1 5.1 4 6.5 4h7C14.9 4 16 5.1 16 6.5v4c0 1.4-1.1 2.5-2.5 2.5H9l-3.2 2.4V13H6.5C5.1 13 4 11.9 4 10.5v-4z" fill="#30d1b0" opacity="0.88"/><path d="M9.5 11.5c0-1.1.9-2 2-2h6.5c1.1 0 2 .9 2 2v3.5c0 1.1-.9 2-2 2h-.5v2.2L14.8 17h-3.3c-1.1 0-2-.9-2-2v-3.5z" fill="#5ce1e6"/></svg>',
-  sparkle: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M10.5 3.5L12.3 9.7L18.5 11.5L12.3 13.3L10.5 19.5L8.7 13.3L2.5 11.5L8.7 9.7L10.5 3.5Z" fill="#a594ff"/><path d="M18 3l.8 2.6L21.5 6.5l-2.7.9L18 10l-.8-2.6L14.5 6.5l2.7-.9L18 3z" fill="#c4b5fd"/></svg>',
-  vectra: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2.5L4.5 5.3v5.8c0 4.8 3.3 8.8 7.5 10.4 4.2-1.6 7.5-5.6 7.5-10.4V5.3L12 2.5z" fill="#0a84ff"/><path d="M13 7l-4 5.5h3.2L11 17l4-5.5h-3.2L13 7z" fill="#fff"/></svg>',
-  checkCircle: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M8 12.3l2.7 2.7 5.5-5.8" stroke="#1e1e20" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  warnTri: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none"><path d="M12 3L22 20H2L12 3z" fill="currentColor"/><path d="M12 9.5v4.8" stroke="#1e1e20" stroke-width="2.1" stroke-linecap="round"/><circle cx="12" cy="17" r="1.3" fill="#1e1e20"/></svg>',
-  miniOk: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4.5 4.5L19 7.5"/></svg>',
-  miniWarn: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5"/><circle cx="12" cy="16" r="0.8" fill="currentColor"/></svg>',
-  miniBad: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
-  card: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a84ff" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19"/><path d="M6.5 15h4"/></svg>',
-  bagCheck: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#32d74b" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/><path d="M9.5 14l1.7 1.7 3.3-3.4"/></svg>',
-  wrench: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
-  download: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8.5 12.5L12 16l3.5-3.5"/></svg>'
+  chevDown: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+  globe: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4.2" ry="9"/><path d="M3.5 9h17M3.5 15h17"/></svg>',
+  arrows: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h15M15 5l4 4-4 4"/><path d="M20 15H5M9 11l-4 4 4 4"/></svg>',
+  sliders: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.2" fill="#191b21"/><circle cx="15" cy="17" r="2.2" fill="#191b21"/></svg>',
+  sun: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="#fbbf24"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/></svg>',
+  chat: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 6.5C4 5.1 5.1 4 6.5 4h7C14.9 4 16 5.1 16 6.5v4c0 1.4-1.1 2.5-2.5 2.5H9l-3.2 2.4V13H6.5C5.1 13 4 11.9 4 10.5v-4z" fill="#2dd4bf"/><path d="M9.5 11.5c0-1.1.9-2 2-2h6.5c1.1 0 2 .9 2 2v3.5c0 1.1-.9 2-2 2h-.5v2.2L14.8 17h-3.3c-1.1 0-2-.9-2-2v-3.5z" fill="#5eead4"/></svg>',
+  sparkle: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M10.5 3.5L12.3 9.7L18.5 11.5L12.3 13.3L10.5 19.5L8.7 13.3L2.5 11.5L8.7 9.7L10.5 3.5Z" fill="#a78bfa"/><path d="M18 3l.8 2.6L21.5 6.5l-2.7.9L18 10l-.8-2.6L14.5 6.5l2.7-.9L18 3z" fill="#c4b5fd"/></svg>',
+  vectra: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 2.5L4.5 5.3v5.8c0 4.8 3.3 8.8 7.5 10.4 4.2-1.6 7.5-5.6 7.5-10.4V5.3L12 2.5z" fill="#3b82f6"/><path d="M13 7l-4 5.5h3.2L11 17l4-5.5h-3.2L13 7z" fill="#fff"/></svg>',
+  heroOk: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4.5 4.5L19 7.5"/></svg>',
+  heroWarn: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4L21 19H3L12 4z"/><path d="M12 10v4"/><circle cx="12" cy="16.5" r="0.8" fill="currentColor"/></svg>',
+  miniOk: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4.5 4.5L19 7.5"/></svg>',
+  miniWarn: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5"/><circle cx="12" cy="16" r="0.9" fill="currentColor"/></svg>',
+  miniBad: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
+  card: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19"/><path d="M6.5 15h4"/></svg>',
+  bagCheck: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 12H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/><path d="M9.5 14l1.7 1.7 3.3-3.4"/></svg>',
+  wrench: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+  download: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8.5 12.5L12 16l3.5-3.5"/></svg>'
 };
 
 const COUNTRIES = ['Нидерланды','Германия','США','Финляндия','Великобритания','Сингапур','Япония'];
@@ -442,21 +580,22 @@ function cleanStatusText(raw) {
   return String(raw || '').replace(/^[✓×!]\s+/, '');
 }
 
-function renderHeader(isHome) {
+function renderHeader(isHome, pageTitle) {
   const backTarget = (state.page === 'store-detail') ? 'store' : 'home';
   const backLabel = (state.page === 'store-detail') ? 'Магазин' : 'Назад';
   return `
     <div class="topbar">
       ${isHome
-        ? `<span class="brand-icon">${ICONS.shield}</span>`
-        : `<button class="back-btn" data-nav="${backTarget}">${ICONS.back}<span>${backLabel}</span></button>`}
-      <span class="brand-title">AI Exit Guard</span>
-      <span class="brand-ver">${esc(state.version)}</span>
+        ? `<span class="brand-mark">${ICONS.brand}</span>
+           <span class="brand-title">AI Exit Guard</span>
+           <span class="brand-ver">${esc(state.version)}</span>`
+        : `<button class="back-btn" data-nav="${backTarget}">${ICONS.back}<span>${backLabel}</span></button>
+           <span class="brand-title">${esc(pageTitle || 'AI Exit Guard')}</span>`}
       <span class="spacer"></span>
       ${isHome ? `
-        <button class="store-pill" data-nav="store" aria-label="Магазин">${ICONS.bag.replace('width="16" height="16"','width="13" height="13"')}<span>Магазин</span></button>
+        <button class="store-pill" data-nav="store" aria-label="Магазин">${ICONS.bag}<span>Магазин</span></button>
         <button class="icon-btn" data-nav="settings" title="Настройки" aria-label="Настройки">${ICONS.gear}</button>
-      ` : ''}
+      ` : `<span class="brand-ver">${esc(state.version)}</span>`}
     </div>
   `;
 }
@@ -464,27 +603,32 @@ function renderHeader(isHome) {
 function renderHome() {
   const tone = state.verdictTone || 'neutral';
   const heroIcon = state.verdictIcon === 'globe' ? ICONS.globe
-    : state.verdictIcon === 'check' ? ICONS.checkCircle
-    : state.verdictIcon === 'warn' ? ICONS.warnTri
+    : state.verdictIcon === 'check' ? ICONS.heroOk
+    : state.verdictIcon === 'warn' ? ICONS.heroWarn
     : ICONS.shield;
-  const svcIcons = [ICONS.sun, ICONS.chat, ICONS.sparkle];
+  const svcMeta = [
+    { icon: ICONS.sun, cls: 'amber' },
+    { icon: ICONS.chat, cls: 'teal' },
+    { icon: ICONS.sparkle, cls: 'violet' }
+  ];
 
   const servicesHtml = (state.services || []).map((s, idx) => {
+    const m = svcMeta[idx] || { icon: ICONS.globe, cls: 'slate' };
     const badgeIcon = s.tone === 'ok' ? ICONS.miniOk
       : s.tone === 'warn' ? ICONS.miniWarn
       : s.tone === 'bad' ? ICONS.miniBad
       : '';
     return `
       ${idx > 0 ? '<div class="divider tight"></div>' : ''}
-      <div>
-        <div class="row">
-          <span class="row-icon">${svcIcons[idx] || ICONS.globe}</span>
-          <div class="row-main"><div class="row-title">${esc(s.name)}</div></div>
-          <div class="row-right">
-            <span class="svc-status ${esc(s.tone || 'muted')}">${badgeIcon}<span>${esc(cleanStatusText(s.status))}</span></span>
-          </div>
+      <div class="row">
+        <span class="sq ${m.cls}">${m.icon}</span>
+        <div class="row-main">
+          <div class="row-title">${esc(s.name)}</div>
+          ${s.reason ? `<div class="row-sub">${esc(s.reason)}</div>` : ''}
         </div>
-        ${s.reason ? `<div class="svc-reason">${esc(s.reason)}</div>` : ''}
+        <div class="row-right">
+          <span class="pill ${esc(s.tone || 'muted')}">${badgeIcon}<span>${esc(cleanStatusText(s.status))}</span></span>
+        </div>
       </div>
     `;
   }).join('');
@@ -492,7 +636,7 @@ function renderHome() {
   const updateHtml = state.update && state.update.available ? `
     <div class="card update">
       <div class="row">
-        <span class="row-icon" style="color:var(--blue)">${ICONS.download}</span>
+        <span class="sq blue">${ICONS.download}</span>
         <div class="row-main">
           <div class="row-title">Доступно обновление ${esc(state.update.latest)}</div>
           <div class="row-sub">${esc(state.update.busy ? 'Загрузка с GitHub…' : 'Новая версия готова к установке')}</div>
@@ -504,12 +648,12 @@ function renderHome() {
 
   return `
     ${renderHeader(true)}
-    <div class="hero tone-${esc(tone)}">
-      <div class="hero-row">
-        <span class="hero-icon" style="display:inline-flex">${heroIcon}</span>
+    <div class="hero-card tone-${esc(tone)}">
+      <div class="hero-medallion">${heroIcon}</div>
+      <div class="hero-body">
         <div class="hero-title">${esc(state.verdict)}</div>
+        <div class="hero-sub">${esc(state.status)}</div>
       </div>
-      <div class="hero-sub">${esc(state.status)}</div>
     </div>
 
     ${updateHtml}
@@ -521,10 +665,10 @@ function renderHome() {
 
     <div class="card">
       <div class="row clickable" data-nav="proxy">
-        <span class="row-icon" style="color:var(--ink)">${ICONS.globe}</span>
+        <span class="sq blue">${ICONS.globe}</span>
         <div class="row-main"><div class="row-title">${esc(state.proxyTitle || 'Прокси')}</div></div>
         <div class="row-right">
-          <span>${esc(state.proxyBadge)}</span>
+          <span class="pill ${state.proxyBadge === 'Подключён' ? 'ok' : 'muted'}">${esc(state.proxyBadge)}</span>
           <span class="chev">${ICONS.chev}</span>
         </div>
       </div>
@@ -540,8 +684,8 @@ function renderHome() {
     </div>
 
     <div class="card compact">
-      <div class="row clickable" data-nav="connections" style="padding:7px 6px;">
-        <span class="row-icon" style="color:var(--ink)">${ICONS.arrows}</span>
+      <div class="row clickable" data-nav="connections" style="padding:6px 6px;">
+        <span class="sq slate">${ICONS.arrows}</span>
         <div class="row-main"><div class="row-title">Активные подключения</div></div>
         <span class="chev">${ICONS.chev}</span>
       </div>
@@ -549,12 +693,12 @@ function renderHome() {
 
     <div class="card vectra">
       <div class="row">
-        <span class="row-icon">${ICONS.vectra}</span>
+        <span class="sq blue">${ICONS.vectra}</span>
         <div class="row-main">
           <div class="row-title">Vectra Connect</div>
           <div class="row-sub">Лучший VPN-сервис для быстрой и стабильной работы</div>
         </div>
-        <button class="btn subtle sm" data-action="open-vectra">Открыть</button>
+        <button class="btn sm" data-action="open-vectra">Открыть</button>
       </div>
     </div>
 
@@ -570,8 +714,8 @@ function renderProxySlot(slot, idx, isPrimary) {
   const schemes = ['HTTP', 'HTTPS', 'SOCKS5'];
   return `
     <div class="card">
-      ${!isPrimary ? `<div class="row-title" style="margin-bottom:6px">${esc(slot.name)}</div>` : ''}
-      <div class="row" style="margin-bottom:2px">
+      ${!isPrimary ? `<div class="card-label" style="margin-bottom:6px">${esc(slot.name)}</div>` : ''}
+      <div class="row" style="margin-bottom:2px;min-height:20px">
         <span class="field-label" style="margin:0">Протокол</span>
         <span class="spacer"></span>
         <label class="check-row" style="color:var(--muted)">
@@ -621,8 +765,7 @@ function renderProxyPage() {
   const slots = state.proxySlots || [];
   const saved = state.savedProxies || [];
   return `
-    ${renderHeader(false)}
-    <div class="page-title">Общий прокси</div>
+    ${renderHeader(false, 'Общий прокси')}
     ${state.inputFeedback ? `<div class="feedback">${esc(state.inputFeedback)}</div>` : ''}
     ${slots[0] ? renderProxySlot(slots[0], 0, true) : ''}
 
@@ -641,16 +784,26 @@ function renderProxyPage() {
     ` : ''}
 
     <div class="card compact">
-      <div class="row clickable" data-open-store="proxy" style="padding:7px 6px;">
-        <span class="row-icon" style="color:var(--blue)">${ICONS.globe}</span>
-        <div class="row-main"><div class="row-title">Купить чистый прокси</div></div>
+      <div class="row clickable" data-open-store="proxy" style="padding:6px 6px;">
+        <span class="sq blue">${ICONS.globe}</span>
+        <div class="row-main">
+          <div class="row-title">Купить чистый прокси</div>
+          <div class="row-sub">Статический IP без скачков и банов</div>
+        </div>
         <span class="chev">${ICONS.chev}</span>
       </div>
     </div>
 
-    <button class="collapsible-btn" data-action="toggle-routes">
-      Отдельные прокси ${state.showRouteOptions ? '▾' : '▸'}
-    </button>
+    <div class="card compact">
+      <div class="row clickable" data-action="toggle-routes" style="padding:6px 6px;">
+        <span class="sq slate">${ICONS.sliders}</span>
+        <div class="row-main">
+          <div class="row-title">Отдельные прокси</div>
+          <div class="row-sub">Свой маршрут для Claude, ChatGPT или Antigravity</div>
+        </div>
+        <span class="chev">${state.showRouteOptions ? ICONS.chevDown : ICONS.chev}</span>
+      </div>
+    </div>
 
     ${state.showRouteOptions ? `
       <div class="stack-gap">
@@ -669,17 +822,16 @@ function renderProxyPage() {
 function renderConnections() {
   const flows = state.flows || [];
   return `
-    ${renderHeader(false)}
-    <div class="page-title">Активные подключения</div>
+    ${renderHeader(false, 'Подключения')}
     <div class="card">
       <div class="row-sub" style="margin-top:0">${esc(state.dnsNote || 'Сверяем прямые TCP-соединения с DNS Windows…')}</div>
       <div class="flow-list">
         <div class="flow-row head"><span>Состояние</span><span>Адрес</span><span style="text-align:right">Время</span></div>
         ${flows.length === 0
-          ? `<div class="row-sub" style="padding:14px 0;text-align:center">Пока нет зафиксированных соединений</div>`
+          ? `<div class="row-sub" style="padding:16px 0;text-align:center">Пока нет зафиксированных соединений</div>`
           : flows.map(f => `
             <div class="flow-row">
-              <span class="svc-status ${esc(f.tone || 'muted')}">${esc(f.state)}</span>
+              <span><span class="pill ${esc(f.tone || 'muted')}">${esc(f.state)}</span></span>
               <span class="flow-domain selectable">${esc(f.domain)}</span>
               <span class="flow-time">${esc(f.time)}</span>
             </div>
@@ -693,8 +845,7 @@ function renderSettings() {
   const p = state.patch || {};
   const u = state.update || {};
   return `
-    ${renderHeader(false)}
-    <div class="page-title">Настройки</div>
+    ${renderHeader(false, 'Настройки')}
 
     ${state.dnsCleanupVisible ? `
       <div class="card">
@@ -709,8 +860,9 @@ function renderSettings() {
     ` : ''}
 
     <div class="card">
+      <div class="card-label">Система</div>
       <div class="row">
-        <span class="row-icon" style="color:var(--muted)">${ICONS.wrench}</span>
+        <span class="sq ${p.tone === 'ok' ? 'green' : p.tone === 'warn' ? 'amber' : 'slate'}">${ICONS.wrench}</span>
         <div class="row-main">
           <div class="row-title">Патч Antigravity</div>
           <div class="row-sub" style="color:${p.tone === 'ok' ? 'var(--green)' : p.tone === 'warn' ? 'var(--amber)' : 'var(--muted)'}">${esc(p.status || 'Проверяем…')}</div>
@@ -720,17 +872,17 @@ function renderSettings() {
       </div>
       <div class="divider"></div>
       <div class="row">
-        <span class="row-icon" style="color:var(--muted)">${ICONS.download}</span>
+        <span class="sq blue">${ICONS.download}</span>
         <div class="row-main">
           <div class="row-title">Обновления Guard</div>
-          <div class="row-sub" style="color:${u.available ? 'var(--blue)' : 'var(--muted)'}">${esc(u.status || ('Версия ' + state.version))}</div>
+          <div class="row-sub" style="color:${u.available ? 'var(--blue-light)' : 'var(--muted)'}">${esc(u.status || ('Версия ' + state.version))}</div>
         </div>
         <button class="btn sm ${u.available ? 'primary' : ''}" data-action="${u.available ? 'update-install' : 'update-check'}" ${u.busy ? 'disabled' : ''}>${esc(u.button || 'Проверить')}</button>
       </div>
     </div>
 
     <div>
-      <button class="btn danger-ghost" data-action="quit">Завершить AI Exit Guard</button>
+      <button class="btn danger-ghost full" data-action="quit">Завершить AI Exit Guard</button>
     </div>
   `;
 }
@@ -738,11 +890,11 @@ function renderSettings() {
 function renderStore() {
   const count = (state.purchases || []).length;
   return `
-    ${renderHeader(false)}
-    <div class="page-title">Магазин</div>
-    <div class="card compact">
-      <div class="row clickable" data-open-store="proxy" style="padding:9px 6px;">
-        <span class="row-icon" style="color:var(--blue)">${ICONS.globe}</span>
+    ${renderHeader(false, 'Магазин')}
+    <div class="card">
+      <div class="card-label">Доступ и оплата ИИ</div>
+      <div class="row clickable" data-open-store="proxy" style="padding:6px 6px;">
+        <span class="sq blue">${ICONS.globe}</span>
         <div class="row-main">
           <div class="row-title">Чистый прокси</div>
           <div class="row-sub">Статический IP без скачков и банов</div>
@@ -750,8 +902,8 @@ function renderStore() {
         <span class="chev">${ICONS.chev}</span>
       </div>
       <div class="divider tight"></div>
-      <div class="row clickable" data-open-store="card" style="padding:9px 6px;">
-        <span class="row-icon">${ICONS.card}</span>
+      <div class="row clickable" data-open-store="card" style="padding:6px 6px;">
+        <span class="sq blue">${ICONS.card}</span>
         <div class="row-main">
           <div class="row-title">Карта Vectra Pay</div>
           <div class="row-sub">Для оплаты Claude, ChatGPT и Cursor</div>
@@ -759,8 +911,8 @@ function renderStore() {
         <span class="chev">${ICONS.chev}</span>
       </div>
       <div class="divider tight"></div>
-      <div class="row clickable" data-open-store="claude" style="padding:9px 6px;">
-        <span class="row-icon">${ICONS.sparkle}</span>
+      <div class="row clickable" data-open-store="claude" style="padding:6px 6px;">
+        <span class="sq violet">${ICONS.sparkle}</span>
         <div class="row-main">
           <div class="row-title">Аккаунт Claude</div>
           <div class="row-sub">Верифицированный · можно сразу с IP</div>
@@ -770,8 +922,8 @@ function renderStore() {
     </div>
 
     <div class="card compact">
-      <div class="row clickable" data-open-store="purchases" style="padding:9px 6px;">
-        <span class="row-icon">${ICONS.bagCheck}</span>
+      <div class="row clickable" data-open-store="purchases" style="padding:6px 6px;">
+        <span class="sq green">${ICONS.bagCheck}</span>
         <div class="row-main">
           <div class="row-title">Мои покупки</div>
           <div class="row-sub">Карты, аккаунты и прокси</div>
@@ -785,10 +937,11 @@ function renderStore() {
 
 function renderStoreDetail() {
   const kind = state.storeDetail || ui.storeDetail || 'proxy';
+  let title = 'Магазин';
   let body = '';
   if (kind === 'proxy') {
+    title = 'Чистый прокси';
     body = `
-      <div class="page-title">Чистый прокси</div>
       <div class="page-sub">Выделенный IP, проверенный для Claude, ChatGPT и Antigravity.</div>
       <div class="card stack-gap">
         <div>
@@ -804,13 +957,13 @@ function renderStoreDetail() {
             <button type="button" class="${ui.storeMonths === 3 ? 'active' : ''}" data-store-months="3">3 месяца</button>
           </div>
         </div>
-        <button class="btn primary full" disabled>Оплатить · Скоро</button>
+        <button class="btn soon" disabled>Оплатить · Скоро</button>
         <div class="row-sub" style="margin:0">После оплаты прокси сам добавится в Guard и подключится.</div>
       </div>
     `;
   } else if (kind === 'card') {
+    title = 'Карта Vectra Pay';
     body = `
-      <div class="page-title">Карта Vectra Pay</div>
       <div class="page-sub">Предоплаченная Visa с готовым Billing Address под оплату ИИ.</div>
       <div class="card stack-gap">
         <div>
@@ -819,27 +972,27 @@ function renderStoreDetail() {
             ${[20, 100, 200].map(a => `<button type="button" class="${ui.storeAmount === a ? 'active' : ''}" data-store-amount="${a}">$${a}</button>`).join('')}
           </div>
         </div>
-        <button class="btn primary full" disabled>Выпустить карту · Скоро</button>
+        <button class="btn soon" disabled>Выпустить карту · Скоро</button>
         <div class="row-sub" style="margin:0">Карта появится в «Мои покупки» с копированием в 1 клик.</div>
       </div>
     `;
   } else if (kind === 'claude') {
+    title = 'Аккаунт Claude';
     body = `
-      <div class="page-title">Аккаунт Claude</div>
       <div class="page-sub">Верифицированный аккаунт с доступом к почте.</div>
       <div class="card stack-gap">
         <label class="check-row">
           <input type="checkbox" data-store-ip ${ui.storeIncludeIp ? 'checked' : ''}>
           Добавить личный IP (привяжется к Claude автоматически)
         </label>
-        <button class="btn primary full" disabled>Оплатить · Скоро</button>
+        <button class="btn soon" disabled>Оплатить · Скоро</button>
         <div class="row-sub" style="margin:0">Логин, пароль и почта сохранятся в «Мои покупки».</div>
       </div>
     `;
   } else {
+    title = 'Мои покупки';
     const list = state.purchases || [];
     body = `
-      <div class="page-title">Мои покупки</div>
       ${list.length === 0 ? `
         <div class="card">
           <div class="row-title">Покупок пока нет</div>
@@ -856,7 +1009,7 @@ function renderStoreDetail() {
       `).join('')}
     `;
   }
-  return `${renderHeader(false)}${body}`;
+  return `${renderHeader(false, title)}${body}`;
 }
 
 function render() {
@@ -866,6 +1019,15 @@ function render() {
   const selStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
 
   const root = document.getElementById('root');
+  let glow = '';
+  if (state.page === 'store' || state.page === 'store-detail') glow = 'glow-store';
+  else if (state.page === 'home' || !state.page) {
+    if (state.verdictTone === 'ok') glow = 'glow-ok';
+    else if (state.verdictTone === 'warn') glow = 'glow-warn';
+    else if (state.verdictTone === 'bad') glow = 'glow-bad';
+  }
+  root.className = 'app' + (glow ? ' ' + glow : '');
+
   if (state.page === 'proxy') root.innerHTML = renderProxyPage();
   else if (state.page === 'connections') root.innerHTML = renderConnections();
   else if (state.page === 'settings') root.innerHTML = renderSettings();
