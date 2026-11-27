@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
@@ -153,6 +155,25 @@ func TestIPinfoQueriesOnlyObservedServiceExits(t *testing.T) {
 	missing := final["api.openai.com"]
 	if missing.Status != "unknown" || missing.Network != "" || missing.IP != "" {
 		t.Fatal(missing)
+	}
+}
+
+func TestDescribeProxyErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"auth", &url.Error{Op: "Get", URL: "https://claude.ai", Err: errProxyAuth}, "прокси отклонил логин или пароль"},
+		{"socks", &url.Error{Op: "Get", URL: "https://claude.ai", Err: errors.New("SOCKS tunnel")}, "прокси не открыл SOCKS-туннель"},
+		{"socks_auth", &url.Error{Op: "Get", URL: "https://claude.ai", Err: errors.New("SOCKS authentication method")}, "прокси отклонил метод авторизации SOCKS"},
+		{"refused", &url.Error{Op: "Get", URL: "https://claude.ai", Err: errors.New("proxy refused tunnel")}, "прокси отклонил туннель"},
+		{"gateway_timeout", &url.Error{Op: "Get", URL: "https://claude.ai", Err: errGatewayTimeout}, "тайм-аут"},
+	}
+	for _, tc := range cases {
+		if got := describe(tc.err); got != tc.want {
+			t.Errorf("%s: describe() = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

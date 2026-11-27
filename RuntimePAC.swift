@@ -4,6 +4,16 @@ import SystemConfiguration
 // Configurations supplied by a running packet tunnel take priority over Wi-Fi preferences.
 // Only the active tunnel's proxy dictionary is edited. No routes, DNS or VPN profiles are replaced.
 enum RuntimePAC {
+    static func primaryInterface()->String {
+        guard let store=SCDynamicStoreCreate(nil,"AI Exit Guard" as CFString,nil,nil),
+              let global=SCDynamicStoreCopyValue(store,"State:/Network/Global/IPv4" as CFString) as? [String:Any],
+              let name=global["PrimaryInterface"] as? String else{return ""}
+        return name
+    }
+    static func hasActiveVPN()->Bool {
+        let name=primaryInterface()
+        return name.hasPrefix("utun") || name.hasPrefix("ppp") || name.hasPrefix("ipsec")
+    }
     static func isTunnelPrimary()->Bool {
         guard let store=SCDynamicStoreCreate(nil,"AI Exit Guard" as CFString,nil,nil),
               let global=SCDynamicStoreCopyValue(store,"State:/Network/Global/IPv4" as CFString) as? [String:Any],

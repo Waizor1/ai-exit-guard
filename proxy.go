@@ -219,7 +219,7 @@ func (s proxySpec) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host, port, e := net.SplitHostPort(r.Host)
-	if r.Method != "CONNECT" || e != nil || port != "443" || len(host) > 253 || (!aiHost(host) && host != "ip123.in") {
+	if r.Method != "CONNECT" || e != nil || port != "443" || len(host) > 253 || (!aiHost(host) && !isIdentityHost(host)) {
 		http.Error(w, "Destination outside AI route", 403)
 		return
 	}
@@ -288,7 +288,7 @@ func (s proxySpec) probeClient() *http.Client {
 	tr := c.Transport.(*http.Transport)
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		h, p, e := net.SplitHostPort(addr)
-		if e != nil || p != "443" || (!aiHost(h) && h != "ip123.in" && h != fallbackIdentityHost) {
+		if e != nil || p != "443" || (!aiHost(h) && !isIdentityHost(h) && h != fallbackIdentityHost) {
 			return nil, errors.New("unexpected host")
 		}
 		return s.tunnel(ctx, h)

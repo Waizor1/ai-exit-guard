@@ -179,6 +179,93 @@ func TestServiceTunnelsAndLeases(t *testing.T) {
 	open("drive.google.com", 403, "")
 }
 
+func TestIdentityProbeUsesCommonRoute(t *testing.T) {
+	upstream := func(label string) (proxySpec, func()) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c, b, e := w.(http.Hijacker).Hijack()
+			if e != nil {
+				return
+			}
+			defer c.Close()
+			fmt.Fprint(b, "HTTP/1.1 200 OK\r\n\r\n")
+			b.Flush()
+			for {
+				s, e := b.ReadString('\n')
+				if e != nil {
+					return
+				}
+				if s == "identity\n" {
+					s = label + "\n"
+				}
+				fmt.Fprint(b, s)
+				b.Flush()
+			}
+		}))
+		h, p, _ := net.SplitHostPort(server.Listener.Addr().String())
+		n, _ := strconv.Atoi(p)
+		return proxySpec{Scheme: "http", Host: h, Port: n}, server.Close
+	}
+	common, done := upstream("common")
+	defer done()
+	individual, done := upstream("individual")
+	defer done()
+	relay := &serviceRelay{}
+	relay.configure(proxyPlan{Common: common, Profiles: map[string]individualProxy{
+		"Antigravity": {Endpoint: individual, Expected: "1.1.1.1"},
+	}})
+	defer relay.close()
+	local := httptest.NewServer(relay)
+	defer local.Close()
+	reach := func(host string, expect int, wantRoute string) {
+		t.Helper()
+		c, e := net.DialTimeout("tcp", local.Listener.Addr().String(), 2*time.Second)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(3 * time.Second))
+		rd := bufio.NewReader(c)
+		fmt.Fprintf(c, "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\n\r\n", host, host)
+		resp, e := http.ReadResponse(rd, &http.Request{Method: "CONNECT"})
+		if e != nil || resp.StatusCode != expect {
+			t.Fatalf("%s: expected %d, got %v %v", host, expect, resp, e)
+		}
+		if expect != 200 {
+			return
+		}
+		fmt.Fprintln(c, "identity")
+		line, e := rd.ReadString('\n')
+		if e != nil || strings.TrimSpace(line) != wantRoute {
+			t.Fatalf("%s left through %q, want %q", host, strings.TrimSpace(line), wantRoute)
+		}
+	}
+	// The identity probe must follow the common endpoint, not an individual
+	// profile, and must work before any kill-switch lease exists.
+	reach(identityHost, 200, "common")
+	relay.control("mode guarded")
+	reach(identityHost, 200, "common")
+	reach("api.anthropic.com", 503, "")
+	reach("example.com", 403, "")
+	p := proxyPlan{Common: common, CommonPaused: true, Profiles: map[string]individualProxy{
+		"Antigravity": {Endpoint: individual, Expected: "1.1.1.1"},
+	}}
+	raw, e := json.Marshal(p)
+	if e != nil || relay.control("config "+string(raw)) != "READY" {
+		t.Fatal("paused common transaction failed")
+	}
+	reach(identityHost, 503, "")
+	relay.control("mode proxy-only")
+	reach(identityHost, 503, "")
+	p.CommonPaused = false
+	raw, _ = json.Marshal(p)
+	if relay.control("config "+string(raw)) != "READY" {
+		t.Fatal("resumed common transaction failed")
+	}
+	reach(identityHost, 200, "common")
+	relay.close()
+	reach(identityHost, 503, "")
+}
+
 func TestDiagnosticsSkipPausedCommon(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // No external test connections, even on a regression.

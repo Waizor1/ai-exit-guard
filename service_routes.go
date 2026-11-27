@@ -20,6 +20,11 @@ import (
 
 const googleHost = "accounts.google.com"
 
+// The IP123 assessment is Guard's own identity probe, not AI traffic. It must
+// leave through the same common exit as the service probes, so the relay
+// accepts it even though no service owns the host.
+const identityHost = "ip123.in"
+
 var services = []string{"Claude", "ChatGPT", "Antigravity"}
 
 type individualProxy struct {
@@ -72,10 +77,20 @@ func serviceForHost(host string) string {
 }
 
 type serviceRelay struct {
-	mu        sync.RWMutex
-	routes    map[string]proxySpec
-	activity  *liveFlows
-	proxyOnly bool
+	mu         sync.RWMutex
+	routes     map[string]proxySpec
+	identity   proxySpec
+	identityOK bool
+	activity   *liveFlows
+	proxyOnly  bool
+}
+
+func sameEndpoint(a, b proxySpec) bool {
+	return a.Scheme == b.Scheme && a.Host == b.Host && a.Port == b.Port && a.User == b.User && a.Password == b.Password
+}
+
+func isIdentityHost(host string) bool {
+	return strings.EqualFold(strings.TrimSuffix(host, "."), identityHost)
 }
 
 func (r *serviceRelay) configure(p proxyPlan) {
@@ -94,7 +109,7 @@ func (r *serviceRelay) configure(p proxyPlan) {
 			}
 			continue
 		}
-		if ok && ep.Scheme == old.Scheme && ep.Host == old.Host && ep.Port == old.Port && ep.User == old.User && ep.Password == old.Password {
+		if ok && sameEndpoint(ep, old) {
 			continue
 		}
 		if ok {
@@ -107,6 +122,28 @@ func (r *serviceRelay) configure(p proxyPlan) {
 		ep.flows = r.activity
 		r.routes[name] = ep
 	}
+	// The identity probe follows the common endpoint, never an individual
+	// profile: it answers "what does IP123 think this machine's exit is".
+	// Its gate stays open in every mode so the check can run before the
+	// kill-switch grants service leases; it carries no AI traffic.
+	shared := p.Common
+	shared.flows = r.activity
+	if !sameEndpoint(shared, r.identity) {
+		if r.identity.gate != nil {
+			r.identity.gate.set(time.Time{})
+		}
+		shared.gate = &relayGate{}
+		r.identity = shared
+	}
+	if r.identity.gate == nil {
+		r.identity.gate = &relayGate{}
+	}
+	r.identityOK = !p.CommonPaused && shared.Host != ""
+	if r.identityOK {
+		r.identity.gate.proxyOnly()
+	} else {
+		r.identity.gate.set(time.Time{})
+	}
 }
 func (r *serviceRelay) close() {
 	r.mu.Lock()
@@ -114,6 +151,10 @@ func (r *serviceRelay) close() {
 	for _, s := range r.routes {
 		s.gate.set(time.Time{})
 	}
+	if r.identity.gate != nil {
+		r.identity.gate.set(time.Time{})
+	}
+	r.identityOK = false
 }
 func (r *serviceRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if servePAC(w, req) {
@@ -121,9 +162,18 @@ func (r *serviceRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	host, _, _ := net.SplitHostPort(req.Host)
 	r.mu.RLock()
+	identity, identityOK := r.identity, r.identityOK
 	service := serviceForHost(host)
 	s, ok := r.routes[service]
 	r.mu.RUnlock()
+	if isIdentityHost(host) {
+		if !identityOK || identity.gate == nil {
+			http.Error(w, "Common proxy is paused", http.StatusServiceUnavailable)
+			return
+		}
+		identity.ServeHTTP(w, req)
+		return
+	}
 	if service == "" {
 		http.Error(w, "Destination outside AI route", 403)
 		return

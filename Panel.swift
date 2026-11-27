@@ -126,6 +126,7 @@ struct GuardPanel: View {
                 AntigravityPatchRow(patch:model.antigravity)
                 AppUpdateRow(updater:model.updater)
                 Button("Активные подключения"){model.showConnections=true}.buttonStyle(.link)
+                Button(model.reportCopied ? "Отчёт скопирован" : "Скопировать отчёт"){model.copyDiagnosticReport()}.buttonStyle(.link)
                 if !model.proxy.managesDomains && model.killSwitch.state != .off {
                     KillSwitchCard(lock:model.killSwitch,proxy:model.proxy)
                 }
@@ -163,6 +164,8 @@ struct GuardPanel: View {
                     Divider()
                     diagnostics(host,service)
                 }
+                Divider()
+                Button(model.reportCopied ? "Отчёт скопирован" : "Скопировать отчёт"){model.copyDiagnosticReport()}.buttonStyle(.link)
             } else {
                 if model.selectedService == nil && model.updater.showBanner {
                     UpdateBanner(updater:model.updater)
@@ -238,6 +241,7 @@ struct GuardPanel: View {
                     }
                     Button("История IP"){model.showHistory=true}.buttonStyle(.link)
                     Button("Технические сведения"){model.technical=true}.buttonStyle(.link)
+                    Button(model.reportCopied ? "Отчёт скопирован" : "Скопировать отчёт"){model.copyDiagnosticReport()}.buttonStyle(.link)
                 } else {
                     VStack(alignment:.leading,spacing:0){
                         Text("СЕРВИСЫ").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.secondary).padding(.bottom,5)
@@ -337,7 +341,10 @@ struct GuardPanel: View {
                     if needsProxy(name) {
                         Text(googleProxyReason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     } else if !paused(name), !checkedRoutes.isEmpty, let finding {
-                        Text(!model.online ? "Нет сети" : finding.verdict == .clear && state != .clear ? "Ждём подтверждения прокси" : finding.shortReason)
+                        let subtitle: String = !model.online ? "Нет сети"
+                            : (finding.verdict == .clear && state != .clear ? "Ждём подтверждения прокси"
+                            : (model.shortIssue(for: routes) ?? finding.shortReason))
+                        Text(subtitle)
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }
                 }
@@ -369,6 +376,7 @@ struct GuardPanel: View {
                     VStack(alignment:.leading,spacing:3){
                         Text(r.Host).fontWeight(.semibold)
                         Text(current ? model.finding(r.Host).explanation : "Предыдущая проверка")
+                        if !r.Detail.isEmpty {Text("Подробности: "+r.Detail)}
                         if let code=r.TraceCountry, !code.isEmpty {Text("Страна выхода   "+(Locale(identifier:"ru").localizedString(forRegionCode:code) ?? code))}
                         if !r.IP.isEmpty {Text("IP проверки домена   "+r.IP)}
                         if !r.AssessmentIP.isEmpty {Text("IP соединения с IP123   "+r.AssessmentIP)}

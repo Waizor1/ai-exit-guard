@@ -890,6 +890,15 @@ function renderSettings() {
         </div>
         <button class="btn sm ${u.available ? 'primary' : ''}" data-action="${u.available ? 'update-install' : 'update-check'}" ${u.busy ? 'disabled' : ''}>${esc(u.button || 'Проверить')}</button>
       </div>
+      <div class="divider"></div>
+      <div class="row">
+        <span class="sq slate">${ICONS.shield}</span>
+        <div class="row-main">
+          <div class="row-title">Диагностика</div>
+          <div class="row-sub">Сводка без логина и пароля прокси</div>
+        </div>
+        <button class="btn sm" data-action="copy-report">${ui.reportCopied ? 'Скопировано' : 'Скопировать отчёт'}</button>
+      </div>
     </div>
 
     <div>
@@ -1036,6 +1045,9 @@ function renderServiceDetail() {
   if (svc.network) rows.push(['Сеть (IPinfo)', svc.network]);
   if (svc.trust) rows.push(['Доверие ' + name, svc.trust + ' / 100']);
   if (svc.risk) rows.push(['Общий риск IP123', svc.risk + ' / 100']);
+  if (svc.detail) rows.push(['Подробности', svc.detail]);
+  if (svc.riskDetail) rows.push(['Риск IP123', svc.riskDetail]);
+  if (svc.infoDetail) rows.push(['IPinfo', svc.infoDetail]);
 
   return `
     ${renderHeader(false, name)}
@@ -1048,7 +1060,11 @@ function renderServiceDetail() {
     </div>
 
     <div class="card">
-      <div class="card-label">Технические сведения</div>
+      <div class="row" style="min-height:20px;margin-bottom:4px">
+        <div class="card-label" style="margin:0">Технические сведения</div>
+        <span class="spacer"></span>
+        <button class="btn sm" data-action="copy-report">${ui.reportCopied ? 'Скопировано' : 'Скопировать отчёт'}</button>
+      </div>
       ${rows.map((r, i) => `
         ${i > 0 ? '<div class="divider tight"></div>' : ''}
         <div class="row" style="min-height:24px">
@@ -1143,6 +1159,11 @@ document.addEventListener('click', (e) => {
     ui.copiedId = act.dataset.id;
     render();
     setTimeout(() => { if (ui.copiedId === act.dataset.id) { ui.copiedId = ''; render(); } }, 1400);
+  }
+  if (action === 'copy-report') {
+    ui.reportCopied = true;
+    render();
+    setTimeout(() => { if (ui.reportCopied) { ui.reportCopied = false; render(); } }, 1800);
   }
   post({ type: action, idx: act.dataset.idx ? Number(act.dataset.idx) : undefined, id: act.dataset.id, text: act.dataset.text });
 });

@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -168,6 +169,61 @@ sealed class GuardWindow : Form {
         public string Network {get;set;}
         public string Trust {get;set;}
         public string Risk {get;set;}
+        public string Detail {get;set;}
+        public string RiskDetail {get;set;}
+        public string InfoDetail {get;set;}
+    }
+    bool HasActiveVpn(){
+        if(smokeMode)return false;
+        try{
+            foreach(var nic in NetworkInterface.GetAllNetworkInterfaces()){
+                if(nic.OperationalStatus!=OperationalStatus.Up)continue;
+                if(nic.NetworkInterfaceType==NetworkInterfaceType.Ppp || nic.NetworkInterfaceType==NetworkInterfaceType.Tunnel)return true;
+                string desc=((nic.Name??"")+" "+(nic.Description??"")).ToLowerInvariant();
+                if(desc.Contains("wintun") || desc.Contains("wireguard") || desc.Contains("openvpn") || desc.Contains("tap-windows") || desc.Contains("happ") || desc.Contains("sing-box") || desc.Contains("nekobox") || desc.Contains("vpn"))return true;
+            }
+        }catch{}
+        return false;
+    }
+    string FriendlyReason(Reading r){
+        if(r==null)return "";
+        string reason=r.Reason??"";
+        string detail=r.Detail??"";
+        if((reason.Contains("Прокси не ответил") || detail.Contains("тайм-аут")) && HasActiveVpn()){
+            return "Прокси не ответил. Возможно, мешает VPN — выключите его на минуту или добавьте прокси в исключения.";
+        }
+        return reason;
+    }
+    string BuildDiagnosticReport(){
+        var sb=new StringBuilder();
+        sb.AppendLine("AI Exit Guard "+Application.ProductVersion+" (Windows)");
+        sb.AppendLine("Время: "+DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"));
+        sb.AppendLine("Режим: "+(ProxyOnly?"Только прокси":"Защита по IP")+" · Прокси: "+proxyBadge.Text);
+        sb.AppendLine("VPN-адаптер: "+(HasActiveVpn()?"активен":"нет"));
+        sb.AppendLine("");
+        for(int i=0;i<3;i++){
+            string svcName=names[i+1];
+            Reading r=null;
+            if(leases!=null)leases.TryGetValue(svcName,out r);
+            if(r==null){
+                sb.AppendLine(svcName+": нет данных");
+                continue;
+            }
+            var parts=new List<string>();
+            parts.Add(svcName+":");
+            parts.Add("status="+outcomes[i].Text);
+            if(!String.IsNullOrEmpty(r.Reason))parts.Add("reason="+r.Reason);
+            if(!String.IsNullOrEmpty(r.IP))parts.Add("ip="+r.IP);
+            if(!String.IsNullOrEmpty(r.TraceCountry))parts.Add("traceCountry="+r.TraceCountry);
+            if(!String.IsNullOrEmpty(r.Country))parts.Add("ipinfoCountry="+r.Country);
+            if(!String.IsNullOrEmpty(r.Trust))parts.Add("trust="+r.Trust);
+            if(!String.IsNullOrEmpty(r.Risk))parts.Add("risk="+r.Risk);
+            if(!String.IsNullOrEmpty(r.Detail))parts.Add("detail="+r.Detail);
+            if(!String.IsNullOrEmpty(r.RiskDetail))parts.Add("riskDetail="+r.RiskDetail);
+            if(!String.IsNullOrEmpty(r.InfoDetail))parts.Add("infoDetail="+r.InfoDetail);
+            sb.AppendLine(String.Join(" | ",parts.ToArray()));
+        }
+        return sb.ToString();
     }
     bool ReadAutostart(){
         if(smokeMode)return autostartState;
@@ -923,7 +979,10 @@ sealed class GuardWindow : Form {
                     {"traceCountry",r!=null?(r.TraceCountry??""):""},
                     {"network",r!=null?(r.Network??""):""},
                     {"trust",r!=null?(r.Trust??""):""},
-                    {"risk",r!=null?(r.Risk??""):""}
+                    {"risk",r!=null?(r.Risk??""):""},
+                    {"detail",r!=null?(r.Detail??""):""},
+                    {"riskDetail",r!=null?(r.RiskDetail??""):""},
+                    {"infoDetail",r!=null?(r.InfoDetail??""):""}
                 });
             }
             var slotList=new List<object>();
@@ -1129,6 +1188,9 @@ sealed class GuardWindow : Form {
                 break;
             case "copy-text":
                 if(msg.ContainsKey("text")){try{Clipboard.SetText(Convert.ToString(msg["text"]));}catch{}}
+                break;
+            case "copy-report":
+                try{Clipboard.SetText(BuildDiagnosticReport());}catch{}
                 break;
             case "quit":
                 quitting=true;Close();
@@ -1660,7 +1722,7 @@ sealed class GuardWindow : Form {
             else if(r.Until>now){caption=ProxyOnly?"✓  Низкий риск":"✓  Можно работать";color=Color.LightGreen;open++;}
             else{caption=ProxyOnly?(r.HighRisk?"×  Высокий риск":"!  Есть замечание"):"×  Закрыт";color=ProxyOnly && !r.HighRisk?Color.FromArgb(255,195,111):Color.LightSalmon;}
             if(outcomes[i].Text!=caption){outcomes[i].Text=caption;outcomes[i].ForeColor=color;}
-            string reason=r==null || r.Until>now?"":r.Reason;
+            string reason=r==null || r.Until>now?"":FriendlyReason(r);
             if(r!=null && r.Until<=now && String.IsNullOrEmpty(reason))reason="Срок проверки истёк.";
             if(!String.IsNullOrEmpty(reason) && (firstIssue==null || (r!=null && r.HighRisk && !highIssue))){firstIssue=names[i+1]+": "+reason;highIssue=r!=null && r.HighRisk;}
             if(r==null)reason="Ожидаем результат проверки.";

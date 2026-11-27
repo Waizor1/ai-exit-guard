@@ -67,6 +67,7 @@ final class Monitor: NSObject, ObservableObject {
     let connections=ConnectionList()
     var history=ExitHistory()
     @Published var permissions = false
+    @Published var reportCopied = false
     @Published var notificationState = "Проверяем"
     @Published var loginState = "Проверяем"
     var policyDate: () -> Date = Date.init
@@ -159,6 +160,101 @@ final class Monitor: NSObject, ObservableObject {
         if verdict == .clear && !proxy.expected.isEmpty && hosts.contains(where:{!proxy.isOpen(Self.service($0),at:now)}) {return .caution}
         return verdict
     }
+    func friendlyIssue(for selectedHosts:[String]) -> String? {
+        var sawAuth = false
+        var sawTimeout = false
+        var sawIP123 = false
+        for host in selectedHosts {
+            let f = finding(host)
+            guard f.missingEvidence, let row = rows[host] else { continue }
+            let d = row.Detail
+            if d.contains("логин или пароль") || d.contains("авторизации SOCKS") {
+                sawAuth = true
+            } else if d.contains("тайм-аут") || d.contains("Истекло время") {
+                sawTimeout = true
+            } else if d.hasPrefix("IP123:") || (!row.IP.isEmpty && (f == .trustUnavailable || f == .riskUnavailable)) {
+                sawIP123 = true
+            }
+        }
+        if sawAuth {
+            return "Не подошёл логин или пароль прокси. Проверьте настройки прокси."
+        }
+        if sawTimeout {
+            if RuntimePAC.hasActiveVPN() {
+                return "Прокси не ответил. Возможно, мешает VPN — выключите его на минуту или добавьте прокси в исключения."
+            }
+            return "Прокси не ответил. Проверьте интернет или повторите проверку позже."
+        }
+        if sawIP123 {
+            return "Прокси работает, но сервис проверки репутации временно не ответил."
+        }
+        return nil
+    }
+    func shortIssue(for selectedHosts:[String]) -> String? {
+        var sawAuth = false
+        var sawTimeout = false
+        var sawIP123 = false
+        for host in selectedHosts {
+            let f = finding(host)
+            guard f.missingEvidence, let row = rows[host] else { continue }
+            let d = row.Detail
+            if d.contains("логин или пароль") || d.contains("авторизации SOCKS") {
+                sawAuth = true
+            } else if d.contains("тайм-аут") || d.contains("Истекло время") {
+                sawTimeout = true
+            } else if d.hasPrefix("IP123:") || (!row.IP.isEmpty && (f == .trustUnavailable || f == .riskUnavailable)) {
+                sawIP123 = true
+            }
+        }
+        if sawAuth { return "Не подошёл логин или пароль прокси" }
+        if sawTimeout { return RuntimePAC.hasActiveVPN() ? "Прокси не ответил · возможно, мешает VPN" : "Прокси не ответил" }
+        if sawIP123 { return "Сервис проверки репутации временно не ответил" }
+        return nil
+    }
+    func copyDiagnosticReport() {
+        let ver = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "unknown"
+        let mode = proxy.expected.isEmpty ? "Только наблюдение" : (proxy.proxyOnly ? "Только прокси" : "Защита по IP")
+        let proxyState = proxy.paused ? "на паузе" : (proxy.expected.isEmpty ? "выключен" : (proxy.ready ? "подключён" : "нет соединения"))
+        let iface = RuntimePAC.primaryInterface()
+        let vpn = RuntimePAC.hasActiveVPN() ? "активен" : "нет"
+        var lines = [
+            "AI Exit Guard \(ver) (macOS)",
+            "Время: \(iso.string(from: Date()))",
+            "Режим: \(mode) · Прокси: \(proxyState)",
+            "Сеть: \(online ? "онлайн" : "офлайн") · Интерфейс: \(iface.isEmpty ? "—" : iface) · VPN: \(vpn)"
+        ]
+        if !note.isEmpty { lines.append("Заметка: \(note)") }
+        lines.append("")
+        for host in monitoredHosts {
+            if let r = rows[host] {
+                let f = finding(host)
+                var parts = [
+                    "\(host):",
+                    "status=\(r.Status)",
+                    "verdict=\(f.shortReason)"
+                ]
+                if !r.IP.isEmpty { parts.append("ip=\(r.IP)") }
+                if !r.AssessmentIP.isEmpty && r.AssessmentIP != r.IP { parts.append("assessmentIP=\(r.AssessmentIP)") }
+                if let tc = r.TraceCountry, !tc.isEmpty { parts.append("traceCountry=\(tc)") }
+                if !r.Country.isEmpty { parts.append("ipinfoCountry=\(r.Country)") }
+                if let t = r.Trust { parts.append(String(format: "trust=%.1f", t)) }
+                if let rk = r.Risk { parts.append(String(format: "risk=%.1f", rk)) }
+                if !r.Detail.isEmpty { parts.append("detail=\(r.Detail)") }
+                if !r.RiskDetail.isEmpty { parts.append("riskDetail=\(r.RiskDetail)") }
+                if !r.InfoDetail.isEmpty { parts.append("infoDetail=\(r.InfoDetail)") }
+                if !r.Checked.isEmpty { parts.append("checked=\(r.Checked)") }
+                lines.append(parts.joined(separator: " | "))
+            } else {
+                lines.append("\(host): нет данных")
+            }
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        reportCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.reportCopied = false
+        }
+    }
     func explanation(for selectedHosts:[String])->String {
         if !online {return "Подключитесь к интернету. Проверка начнётся автоматически."}
         if !directProbeAllowed && !proxy.expected.isEmpty {return "Маршрут прокси не подтверждён. Проверьте подключение в настройках Guard."}
@@ -172,12 +268,20 @@ final class Monitor: NSObject, ObservableObject {
         if worst == .clear && displayed(selectedHosts) == .caution {
             return "Guard ждёт подтверждения прокси. Доступ откроется после проверки."
         }
-        if worst.missingEvidence, !proxy.expected.isEmpty, selectedHosts.contains(where:{!proxy.isOpen(Self.service($0))}) {
-            return "Ждём подтверждения адреса. Guard сам откроет доступ к сервису после успешной проверки."
-        }
-        if proxy.proxyOnly && worst.missingEvidence {
-            if running || retryAt != nil {return "Проверяем адрес повторно. Прокси продолжает работать."}
-            return "Оценка адреса пока недоступна. Прокси продолжает работать."
+        if worst.missingEvidence {
+            if running {
+                return proxy.proxyOnly ? "Проверяем адрес повторно. Прокси продолжает работать." : "Дождитесь окончания проверки."
+            }
+            if let friendly = friendlyIssue(for: selectedHosts) {
+                return friendly
+            }
+            if !proxy.expected.isEmpty, selectedHosts.contains(where:{!proxy.isOpen(Self.service($0))}) {
+                return "Ждём подтверждения адреса. Guard сам откроет доступ к сервису после успешной проверки."
+            }
+            if proxy.proxyOnly {
+                if retryAt != nil {return "Проверяем адрес повторно. Прокси продолжает работать."}
+                return "Оценка адреса пока недоступна. Прокси продолжает работать."
+            }
         }
         return worst.explanation
     }
@@ -230,7 +334,7 @@ final class Monitor: NSObject, ObservableObject {
         guard online, !running else {return}
         if let retryAt {
             guard now >= retryAt else {return}
-            if proxy.proxyOnly {advisoryRetriesLeft -= 1}
+            if proxy.proxyOnly && advisoryRetriesLeft > 0 {advisoryRetriesLeft -= 1}
             startCheck()
         } else if !proxy.proxyOnly && (elapsed>=interval || elapsed<0) {check()}
     }
@@ -247,9 +351,14 @@ final class Monitor: NSObject, ObservableObject {
     }
     func check() {
         guard !running else {return}
-        advisoryRetriesLeft = 2
+        advisoryRetriesLeft = 4
         recoveryDelay=5
         startCheck()
+    }
+    private func nextRecoveryDelay(_ current:TimeInterval) -> TimeInterval {
+        if current < 10 { return 10 }
+        if current < 30 { return 30 }
+        return 60
     }
     private func startCheck() {
         updateProxy()
@@ -341,9 +450,13 @@ final class Monitor: NSObject, ObservableObject {
                 }
                 if self.received.count != self.monitoredHosts.count || p.terminationStatus != 0 {self.note="Часть результатов недоступна"}
                 let missing = self.monitoredHosts.contains { self.finding($0).missingEvidence }
-                if (missing || p.terminationStatus != 0) && (!self.proxy.proxyOnly || self.advisoryRetriesLeft > 0) {
-                    self.retryAt=Date().addingTimeInterval(self.recoveryDelay)
-                    self.recoveryDelay=min(30,self.recoveryDelay*2)
+                if missing || p.terminationStatus != 0 {
+                    if !self.proxy.proxyOnly || self.advisoryRetriesLeft > 0 {
+                        self.retryAt=Date().addingTimeInterval(self.recoveryDelay)
+                        self.recoveryDelay=self.nextRecoveryDelay(self.recoveryDelay)
+                    } else {
+                        self.retryAt=Date().addingTimeInterval(300)
+                    }
                 } else {self.recoveryDelay=5}
                 self.changed?()
             }
@@ -813,11 +926,21 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
     }
     func recheck(keepPinned:Bool=false) {
         pending?.cancel()
+        if model.proxy.proxyOnly {
+            guard model.online, model.proxy.ready else { return }
+            let hadMissing = model.monitoredHosts.contains { model.finding($0).missingEvidence }
+            if hadMissing || !model.fresh.isEmpty {
+                let work=DispatchWorkItem{[weak self] in self?.model.check()}
+                pending=work
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.7,execute:work)
+            }
+            return
+        }
         // An interface update cannot authorize a new route. An already approved
         // static proxy retains only its original lease while we verify it again.
         let keepLease=keepPinned && model.online && model.proxy.ready && !model.proxy.expected.isEmpty
         model.invalidate("",closeAll:!keepLease)
-        guard model.online, !model.proxy.proxyOnly else{return}
+        guard model.online else{return}
         let work=DispatchWorkItem{[weak self] in self?.model.check()}
         pending=work
         DispatchQueue.main.asyncAfter(deadline:.now()+0.7,execute:work)

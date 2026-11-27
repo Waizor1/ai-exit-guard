@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -47,6 +48,9 @@ type desktopRoute struct {
 	Network      string `json:",omitempty"`
 	Trust        string `json:",omitempty"`
 	Risk         string `json:",omitempty"`
+	Detail       string `json:",omitempty"`
+	RiskDetail   string `json:",omitempty"`
+	InfoDetail   string `json:",omitempty"`
 }
 
 func routeMeta(r result) (ip, country, traceCountry, network, trust, risk string) {
@@ -83,12 +87,21 @@ func (c desktopConfig) refusal(r result, countries map[string]string, now time.T
 	case now.Before(reviewed) || !now.Before(reviewed.AddDate(0, 0, 90)):
 		return "Обновите Guard: срок проверки списка стран истёк."
 	case r.IP == "":
+		if strings.Contains(r.Detail, "логин или пароль") || strings.Contains(r.Detail, "авторизации SOCKS") {
+			return "Не подошёл логин или пароль прокси. Проверьте настройки прокси."
+		}
+		if strings.Contains(r.Detail, "тайм-аут") {
+			return "Прокси не ответил. Проверьте интернет или повторите проверку позже."
+		}
 		return "Не удалось проверить выход. Проверьте подключение прокси."
 	case r.IP != c.pin(service):
 		return "Прокси сменил IP. Проверьте закреплённый адрес."
 	case r.Status == "red":
 		return "IP123 отметил высокий риск для сервиса."
 	case r.IP != r.AssessmentIP:
+		if strings.HasPrefix(r.Detail, "IP123:") {
+			return "Прокси работает, но сервис проверки репутации временно не ответил."
+		}
 		return "IP123 не подтвердил закреплённый IP."
 	case !valid(r.Risk):
 		return "Нет оценки риска для этого IP."
@@ -161,7 +174,7 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		if !c.ProxyOnly && reason != "" && !c.temporaryReading(r, service, countries, time.Now()) {
 			relay.control(service + " 0")
 			ip, country, traceCountry, network, trust, risk := routeMeta(r)
-			closed := desktopRoute{Reason: reason, HighRisk: c.highRisk(r, countries), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
+			closed := desktopRoute{Reason: reason, HighRisk: c.highRisk(r, countries), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk, Detail: r.Detail, RiskDetail: r.RiskDetail, InfoDetail: r.InfoDetail}
 			if state[service] != closed {
 				state[service] = closed
 				c.report(output, state)
@@ -186,7 +199,7 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 		reason := ""
 		temporary := true
 		highRisk := false
-		var ip, country, traceCountry, network, trust, risk string
+		var ip, country, traceCountry, network, trust, risk, detail, riskDetail, infoDetail string
 		for _, host := range group {
 			r := rows[host]
 			mIP, mCountry, mTrace, mNet, mTrust, mRisk := routeMeta(r)
@@ -207,6 +220,15 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 			}
 			if risk == "" && mRisk != "" {
 				risk = mRisk
+			}
+			if detail == "" && r.Detail != "" {
+				detail = r.Detail
+			}
+			if riskDetail == "" && r.RiskDetail != "" {
+				riskDetail = r.RiskDetail
+			}
+			if infoDetail == "" && r.InfoDetail != "" {
+				infoDetail = r.InfoDetail
 			}
 			checked, err := time.Parse(time.RFC3339, r.Checked)
 			finding := c.refusal(r, countries, now)
@@ -232,14 +254,14 @@ func refreshDesktop(ctx context.Context, c desktopConfig, relay *serviceRelay, c
 			// The timer in relayGate independently enforces the original deadline.
 			continue
 		}
-		state[service] = desktopRoute{Reason: reason, HighRisk: highRisk, IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
+		state[service] = desktopRoute{Reason: reason, HighRisk: highRisk, IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk, Detail: detail, RiskDetail: riskDetail, InfoDetail: infoDetail}
 		if c.ProxyOnly {
 			// In advisory mode a measurement must never alter the live tunnel.
 			if reason == "" {
-				state[service] = desktopRoute{Until: until.Unix(), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
+				state[service] = desktopRoute{Until: until.Unix(), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk, Detail: detail, RiskDetail: riskDetail, InfoDetail: infoDetail}
 			}
 		} else if relay.control(fmt.Sprintf("%s %d", service, until.Unix())) == "OPEN" {
-			state[service] = desktopRoute{Until: until.Unix(), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk}
+			state[service] = desktopRoute{Until: until.Unix(), IP: ip, Country: country, TraceCountry: traceCountry, Network: network, Trust: trust, Risk: risk, Detail: detail, RiskDetail: riskDetail, InfoDetail: infoDetail}
 		}
 	}
 	c.report(output, state)

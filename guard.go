@@ -236,6 +236,12 @@ func decodeRisk(b []byte, ip string) (*float64, error) {
 	return data.Risk, nil
 }
 func describe(err error) string {
+	if errors.Is(err, errProxyAuth) {
+		return "прокси отклонил логин или пароль"
+	}
+	if errors.Is(err, errGatewayTimeout) {
+		return "тайм-аут"
+	}
 	var dns *net.DNSError
 	if errors.As(err, &dns) {
 		return "ошибка DNS"
@@ -257,11 +263,20 @@ func describe(err error) string {
 	if errors.As(err, &cert) {
 		return "ошибка сертификата"
 	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "SOCKS authentication method"):
+		return "прокси отклонил метод авторизации SOCKS"
+	case strings.Contains(msg, "SOCKS tunnel"), strings.Contains(msg, "SOCKS reply"):
+		return "прокси не открыл SOCKS-туннель"
+	case strings.Contains(msg, "proxy refused tunnel"):
+		return "прокси отклонил туннель"
+	}
 	var u *url.Error
 	if errors.As(err, &u) {
 		return "ошибка HTTPS"
 	}
-	return err.Error()
+	return msg
 }
 func classify(r *result, p string, t trustResult) {
 	r.AssessmentIP = t.ip
