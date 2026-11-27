@@ -44,11 +44,26 @@ struct GuardPanel: View {
                         Label("Назад",systemImage:"chevron.left")
                     }.buttonStyle(.plain)
                 } else {
-                    Image(systemName:"shield.checkered").foregroundStyle(.secondary)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(LinearGradient(colors: [Color.primary.opacity(0.14), Color.primary.opacity(0.06)], startPoint: .top, endPoint: .bottom))
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.primary.opacity(0.14), lineWidth: 1))
+                        Image(systemName: "shield")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 4, height: 4)
+                    }.frame(width: 24, height: 24)
                 }
                 Text("AI Exit Guard").font(.headline)
                 if let appVersion {
-                    Text(verbatim: appVersion).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    Text(verbatim: appVersion)
+                        .font(.caption2.weight(.medium)).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
                 }
                 Spacer()
                 if !model.permissions && !model.showConnections && !model.proxySettings && !model.store.isOpen && model.selectedService == nil {
@@ -58,12 +73,19 @@ struct GuardPanel: View {
                             Text("Магазин").font(.caption.weight(.medium))
                         }
                         .foregroundStyle(Color.accentColor)
-                        .padding(.horizontal,9)
-                        .padding(.vertical,4)
-                        .background(Color.accentColor.opacity(0.14),in:Capsule())
-                        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.24),lineWidth:1))
+                        .padding(.horizontal,10)
+                        .padding(.vertical,4.5)
+                        .background(Color.accentColor.opacity(0.16),in:Capsule())
+                        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.32),lineWidth:1))
                     }.buttonStyle(.plain).accessibilityLabel("Магазин")
-                    Button {model.permissions=true;model.readPermissions()} label:{Image(systemName:"gearshape").padding(4)}.buttonStyle(.plain).accessibilityLabel("Настройки")
+                    Button {model.permissions=true;model.readPermissions()} label:{
+                        Image(systemName:"gearshape")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .frame(width: 26, height: 26)
+                            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+                    }.buttonStyle(.plain).accessibilityLabel("Настройки")
                 }
             }
             if model.store.isOpen {
@@ -156,12 +178,31 @@ struct GuardPanel: View {
                     Text(model.selectedService ?? "Прокси").font(.title2.bold())
                     Text(model.running ? "Проверяем адрес…" : "Адрес ещё не проверен.").foregroundStyle(.secondary)
                 } else {
-                    VStack(alignment:.leading,spacing:6) {
-                        if let service=model.selectedService {Text(service).font(.subheadline.weight(.semibold))}
-                        Label { Text(verdict.title) } icon: { Image(systemName:verdict.symbol).foregroundStyle(Color(nsColor:verdict.color)) }.font(.title2.bold())
-                        Text(model.explanation(for:selectedHosts)).font(.callout).fixedSize(horizontal:false,vertical:true)
-                    }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
-                     .background(Color(nsColor:verdict.color).opacity(0.10),in:RoundedRectangle(cornerRadius:12))
+                    let heroTint = Color(nsColor: verdict.color)
+                    HStack(spacing: 12) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(heroTint.opacity(0.18))
+                                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(heroTint.opacity(0.38), lineWidth: 1))
+                            Image(systemName: verdict.symbol)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(heroTint)
+                        }.frame(width: 36, height: 36)
+                        VStack(alignment:.leading,spacing:3) {
+                            if let service=model.selectedService {
+                                Text(service.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            }
+                            Text(verdict.title).font(.system(size: 16.5, weight: .semibold))
+                            Text(model.explanation(for:selectedHosts)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth:.infinity,alignment:.leading)
+                    .background(
+                        LinearGradient(colors: [heroTint.opacity(0.13), Color.primary.opacity(0.04)], startPoint: .top, endPoint: .bottom),
+                        in: RoundedRectangle(cornerRadius:12, style: .continuous)
+                    )
+                    .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(heroTint.opacity(0.26), lineWidth: 1))
                 }
                 if let service=model.selectedService {
                     if !needsProxy(service) {
@@ -188,22 +229,30 @@ struct GuardPanel: View {
                     Button("Технические сведения"){model.technical=true}.buttonStyle(.link)
                 } else {
                     VStack(alignment:.leading,spacing:0){
-                        Text("Сервисы").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).padding(.bottom,3)
+                        Text("СЕРВИСЫ").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.secondary).padding(.bottom,5)
                         serviceRow("Claude","sun.max.fill",.orange)
-                        Divider()
+                        Divider().opacity(0.5)
                         serviceRow("ChatGPT","bubble.left.and.bubble.right.fill",.teal)
-                        Divider()
+                        Divider().opacity(0.5)
                         serviceRow("Antigravity","sparkles",.indigo)
-                    }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12))
+                    }
+                    .padding(12)
+                    .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.primary.opacity(0.085), lineWidth: 1))
                 }
                 if model.selectedService == nil {
                     MainProxyCard(monitor:model,proxy:proxy)
                     Button {model.showConnections=true} label:{
-                        HStack {
-                            Label("Активные подключения",systemImage:"arrow.left.arrow.right").font(.headline)
+                        HStack(spacing: 10) {
+                            squircleIcon("arrow.left.arrow.right", tint: .secondary)
+                            Text("Активные подключения").font(.body.weight(.medium))
                             Spacer()
                             Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
-                        }.padding(12).background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12)).contentShape(Rectangle())
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.primary.opacity(0.085), lineWidth: 1))
+                        .contentShape(Rectangle())
                     }.buttonStyle(.plain)
                     VectraConnectBanner()
                 }
@@ -231,6 +280,17 @@ struct GuardPanel: View {
             else {status(model.displayed([host]))}
         }
     }
+    func squircleIcon(_ symbol:String, tint:Color) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(tint == .secondary ? Color.primary.opacity(0.06) : tint.opacity(0.14))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(tint == .secondary ? Color.primary.opacity(0.10) : tint.opacity(0.26), lineWidth: 1))
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(tint)
+        }.frame(width: 28, height: 28)
+    }
     func status(_ state:Recommendation)->some View {
         let label: String
         switch state {
@@ -238,8 +298,13 @@ struct GuardPanel: View {
         case .caution: label = proxyMode ? "Есть замечание" : "Повремените"
         case .avoid: label = proxyMode ? "Высокий риск" : "Не входить"
         }
+        let tint = Color(nsColor: state.color)
         return Label(label,systemImage:state.symbol)
-            .font(.caption.weight(.semibold)).foregroundStyle(Color(nsColor:state.color))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8).padding(.vertical, 3.5)
+            .background(tint.opacity(0.13), in: Capsule())
+            .overlay(Capsule().strokeBorder(tint.opacity(0.26), lineWidth: 1))
     }
     func serviceRow(_ name:String,_ symbol:String,_ tint:Color)->some View {
         let routes = hosts(name)
@@ -247,18 +312,10 @@ struct GuardPanel: View {
         let state = model.displayed(routes)
         let finding = routes.map { model.displayedFinding($0) }.max { $0.rawValue < $1.rawValue }
         return Button { model.selectedService=name; model.technical=false } label: {
-            HStack(alignment:.firstTextBaseline,spacing:9) {
-                Image(systemName:symbol).foregroundStyle(tint).frame(width:24)
-                VStack(alignment:.leading,spacing:4) {
-                    HStack {
-                        Text(name).font(.body.weight(.semibold))
-                        Spacer()
-                        if paused(name) {Text("На паузе").font(.caption).foregroundStyle(.secondary)}
-                        else if needsProxy(name) {Text("Нужен прокси").font(.caption).foregroundStyle(.secondary)}
-                        else if checkedRoutes.isEmpty {
-                            Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси").font(.caption).foregroundStyle(.secondary)
-                        } else { status(state) }
-                    }
+            HStack(alignment:.center,spacing:10) {
+                squircleIcon(symbol, tint: tint)
+                VStack(alignment:.leading,spacing:2) {
+                    Text(name).font(.body.weight(.semibold))
                     if needsProxy(name) {
                         Text(googleProxyReason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     } else if !paused(name), !checkedRoutes.isEmpty, let finding {
@@ -266,8 +323,23 @@ struct GuardPanel: View {
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }
                 }
+                Spacer(minLength: 6)
+                if paused(name) {
+                    Text("На паузе").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3.5)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                } else if needsProxy(name) {
+                    Text("Нужен прокси").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3.5)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                } else if checkedRoutes.isEmpty {
+                    Text(model.proxy.plan?.Profiles[name] == nil ? "Общий прокси" : "Свой прокси")
+                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3.5)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                } else { status(state) }
                 Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
-            }.padding(.vertical,9).contentShape(Rectangle())
+            }.padding(.vertical,8).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityElement(children:.combine)
     }
     func setting(_ icon:String,_ title:String,_ status:String,_ action:String,_ f:@escaping()->Void)->some View{
@@ -312,7 +384,12 @@ private struct UpdateBanner:View {
 private struct VectraConnectBanner:View {
     var body:some View {
         HStack(spacing:10) {
-            Image(systemName:"bolt.shield.fill").foregroundStyle(.blue).frame(width:24)
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.blue.opacity(0.16))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.blue.opacity(0.28), lineWidth: 1))
+                Image(systemName:"bolt.shield.fill").font(.system(size: 13.5, weight: .medium)).foregroundStyle(.blue)
+            }.frame(width:28, height:28)
             VStack(alignment:.leading,spacing:2) {
                 Text("Vectra Connect").font(.subheadline.weight(.semibold))
                 Text("Лучший VPN-сервис для быстрой и стабильной работы")
@@ -324,7 +401,13 @@ private struct VectraConnectBanner:View {
                     NSWorkspace.shared.open(url)
                 }
             }.controlSize(.small)
-        }.padding(12).background(Color.blue.opacity(0.08),in:RoundedRectangle(cornerRadius:12))
+        }
+        .padding(12)
+        .background(
+            LinearGradient(colors: [Color.blue.opacity(0.14), Color.primary.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius:12, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.blue.opacity(0.24), lineWidth: 1))
     }
 }
 
@@ -412,11 +495,22 @@ private struct MainProxyCard:View {
         let status=state
         VStack(alignment:.leading,spacing:10) {
             Button { monitor.proxySettings=true } label: {
-                HStack {
-                    Label("Прокси",systemImage:"network").font(.headline)
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.blue.opacity(0.14))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.blue.opacity(0.26), lineWidth: 1))
+                        Image(systemName:"network").font(.system(size: 13, weight: .medium)).foregroundStyle(.blue)
+                    }.frame(width: 28, height: 28)
+                    Text("Прокси").font(.body.weight(.semibold))
                     Spacer()
+                    let isConnected = proxy.ready && monitor.online && proxy.plan?.CommonPaused != true
                     Text(proxy.expected.isEmpty && !proxy.paused && !proxy.busy ? "Добавить прокси" : status.0)
-                        .font(.callout).foregroundStyle(status.1)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isConnected ? Color.green : status.1)
+                        .padding(.horizontal, 8).padding(.vertical, 3.5)
+                        .background((isConnected ? Color.green : Color.primary).opacity(isConnected ? 0.13 : 0.06), in: Capsule())
+                        .overlay(Capsule().strokeBorder((isConnected ? Color.green : Color.primary).opacity(isConnected ? 0.26 : 0.10), lineWidth: 1))
                     Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
@@ -452,7 +546,8 @@ private struct MainProxyCard:View {
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
             }
         }.padding(12)
-         .background(Color.primary.opacity(0.055),in:RoundedRectangle(cornerRadius:12))
+         .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12, style: .continuous))
+         .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.primary.opacity(0.085), lineWidth: 1))
 
     }
 }

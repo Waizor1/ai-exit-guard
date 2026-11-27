@@ -322,7 +322,7 @@ struct StoreView: View {
                 if store.purchases.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Покупок пока нет").font(.headline)
-                        Text("Купленные прокси, карты Vectra Pay и аккаунты появятся здесь и сохранятся в Связке ключей macOS.")
+                        Text("Купленные прокси, карты Vectra Pay и аккаунты появятся здесь и сохранятся локально в зашифрованном хранилище.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                      .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
@@ -384,7 +384,7 @@ struct StoreView: View {
                         proxy.addPurchasedProxy(country: item.country ?? "", line: line)
                     }.buttonStyle(.borderedProminent)
                 }
-                Text("Хранится зашифрованно в Связке ключей macOS.")
+                Text("Хранится локально в зашифрованном хранилище.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             if !store.statusMessage.isEmpty {
@@ -397,15 +397,21 @@ struct StoreView: View {
                           trailing: String = "", action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: icon).foregroundStyle(tint).frame(width: 26, height: 26)
-                    .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(tint.opacity(0.14))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(tint.opacity(0.26), lineWidth: 1))
+                    Image(systemName: icon).font(.system(size: 13, weight: .medium)).foregroundStyle(tint)
+                }.frame(width: 28, height: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.body.weight(.semibold))
                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if !trailing.isEmpty {
-                    Text(trailing).font(.caption).foregroundStyle(.secondary)
+                    Text(trailing).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.07), in: Capsule())
                 }
                 Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
             }.padding(12).contentShape(Rectangle())
@@ -426,8 +432,21 @@ struct StoreView: View {
     }
 
     private func orderButton(available: Bool, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).frame(maxWidth: .infinity)
-        }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!available || store.busy)
+        if available {
+            return AnyView(
+                Button(action: action) {
+                    Text(title).frame(maxWidth: .infinity)
+                }.buttonStyle(.borderedProminent).controlSize(.large).disabled(store.busy)
+            )
+        }
+        return AnyView(
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+        )
     }
 }
