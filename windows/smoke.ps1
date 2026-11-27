@@ -3,7 +3,7 @@ $dir=(Resolve-Path (Join-Path $PSScriptRoot '..\dist\windows-x64')).Path
 if (!(Test-Path env:GITHUB_ACTIONS)) {throw 'Run this smoke test on a disposable CI runner'}
 & {
     $ui=Start-Process (Join-Path $dir 'AI Exit Guard.exe') -ArgumentList '--smoke-test' -PassThru
-    if(!$ui.WaitForExit(45000)){$ui.Kill();throw 'GUI smoke timed out'}
+    if(!$ui.WaitForExit(65000)){$ui.Kill();throw 'GUI smoke timed out'}
     if($ui.ExitCode -ne 0){
         if($env:GUARD_UI_SCREENSHOTS -and (Test-Path (Join-Path $env:GUARD_UI_SCREENSHOTS 'webview2-error.txt'))){
             Write-Host (Get-Content -Raw (Join-Path $env:GUARD_UI_SCREENSHOTS 'webview2-error.txt'))

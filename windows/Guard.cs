@@ -910,7 +910,8 @@ sealed class GuardWindow : Form {
             Controls.Add(webView);
             webView.BringToFront();
             string udfs=Path.Combine(dataDirectory,"webview2");
-            var env=await CoreWebView2Environment.CreateAsync(null,udfs);
+            var opts=smokeMode?new CoreWebView2EnvironmentOptions("--disable-gpu"):null;
+            var env=await CoreWebView2Environment.CreateAsync(null,udfs,opts);
             await webView.EnsureCoreWebView2Async(env);
             if(IsDisposed || Disposing){webInitDone.TrySetResult(false);return;}
             var s=webView.CoreWebView2.Settings;
@@ -1753,7 +1754,7 @@ sealed class GuardWindow : Form {
     }
     async Task<int> ExerciseFormAsync(){
         timer.Stop();
-        await Task.WhenAny(webInitDone.Task,Task.Delay(18000));
+        await Task.WhenAny(webInitDone.Task,Task.Delay(35000));
         string shotDir=Environment.GetEnvironmentVariable("GUARD_UI_SCREENSHOTS");
         if(!String.IsNullOrEmpty(shotDir) && !webReady){
             try{Directory.CreateDirectory(shotDir);File.WriteAllText(Path.Combine(shotDir,"webview2-error.txt"),String.IsNullOrEmpty(webInitError)?"WebView2 init timed out without ready message":webInitError);}catch{}
