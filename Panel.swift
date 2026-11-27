@@ -52,7 +52,17 @@ struct GuardPanel: View {
                 }
                 Spacer()
                 if !model.permissions && !model.showConnections && !model.proxySettings && !model.store.isOpen && model.selectedService == nil {
-                    Button { model.store.open("list") } label:{ Image(systemName:"bag").padding(4) }.buttonStyle(.plain).accessibilityLabel("Магазин")
+                    Button { model.store.open("list") } label:{
+                        HStack(spacing:4) {
+                            Image(systemName:"bag.fill").font(.caption2)
+                            Text("Магазин").font(.caption.weight(.medium))
+                        }
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal,9)
+                        .padding(.vertical,4)
+                        .background(Color.accentColor.opacity(0.14),in:Capsule())
+                        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.24),lineWidth:1))
+                    }.buttonStyle(.plain).accessibilityLabel("Магазин")
                     Button {model.permissions=true;model.readPermissions()} label:{Image(systemName:"gearshape").padding(4)}.buttonStyle(.plain).accessibilityLabel("Настройки")
                 }
             }

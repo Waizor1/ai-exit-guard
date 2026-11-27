@@ -142,7 +142,16 @@ sealed class GuardWindow : Form {
     }
     protected override void OnHandleCreated(EventArgs e){
         base.OnHandleCreated(e);
-        try{int dark=1;if(DwmSetWindowAttribute(Handle,20,ref dark,4)!=0)DwmSetWindowAttribute(Handle,19,ref dark,4);}catch{}
+        try{
+            int dark=1;
+            if(DwmSetWindowAttribute(Handle,20,ref dark,4)!=0)DwmSetWindowAttribute(Handle,19,ref dark,4);
+            int corner=2; // DWMWCP_ROUND on Windows 11
+            DwmSetWindowAttribute(Handle,33,ref corner,4);
+            int caption=0x00282626; // #262628 seamless title bar matching macOS surface
+            DwmSetWindowAttribute(Handle,35,ref caption,4);
+            int border=0x003A3838; // subtle hairline window rim
+            DwmSetWindowAttribute(Handle,34,ref border,4);
+        }catch{}
     }
     readonly CheckBox allowMismatch = new DarkCheckBox { Dock=DockStyle.Fill,AutoSize=true, Text="Разрешить разные страны Google и IPinfo для Antigravity" };
     sealed class Reading {
@@ -813,7 +822,7 @@ sealed class GuardWindow : Form {
     }
     async void InitWebUi(string dataDirectory){
         try{
-            webView=new WebView2{Dock=DockStyle.Fill,Visible=false,DefaultBackgroundColor=Color.FromArgb(28,28,30)};
+            webView=new WebView2{Dock=DockStyle.Fill,Visible=false,DefaultBackgroundColor=Color.FromArgb(38,38,40)};
             Controls.Add(webView);
             webView.BringToFront();
             string udfs=Path.Combine(dataDirectory,"webview2");
