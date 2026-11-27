@@ -577,6 +577,7 @@ final class AppUpdater:ObservableObject {
     private var didInitialCheck=false
 
     var hasUpdate:Bool { state=="available" && !latest.isEmpty }
+    var showBanner:Bool { (state=="available" || state=="downloading" || state=="installing") && !latest.isEmpty }
     var currentVersion:String {
         (Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String) ?? "0.0.0"
     }

@@ -117,7 +117,7 @@ struct GuardPanel: View {
                     diagnostics(host,service)
                 }
             } else {
-                if model.selectedService == nil && model.updater.hasUpdate {
+                if model.selectedService == nil && model.updater.showBanner {
                     UpdateBanner(updater:model.updater)
                 }
                 if paused(model.selectedService) {
