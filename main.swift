@@ -862,15 +862,8 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
             }
             let plain=model.proxy.proxyOnly && model.proxy.ready && model.online
             if drawnState != state || drawnProxyOnly != plain || drawnPaused != model.proxy.paused || animating != model.running {
-                let shield=model.proxy.paused || plain ? (NSImage(systemSymbolName:model.proxy.paused ? "pause.circle" : "network",accessibilityDescription:title) ?? state.trayIcon) : state.trayIcon
-                let width:CGFloat = model.running ? 36 : 18
-                let image=NSImage(size:NSSize(width:width,height:18),flipped:false){_ in
-                    shield.draw(at:.zero,from:.zero,operation:.sourceOver,fraction:1)
-                    return true
-                }
-                image.isTemplate=plain || model.proxy.paused
+                button.image=Recommendation.trayIcon(state:state,proxyOnly:plain,paused:model.proxy.paused,running:model.running)
                 drawnPaused=model.proxy.paused
-                button.image=image
                 drawnProxyOnly=plain
                 drawnState=state
             }

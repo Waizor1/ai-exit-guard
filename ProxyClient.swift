@@ -1,7 +1,8 @@
 import AppKit
+import CryptoKit
+import IOKit
 import SwiftUI
 import SystemConfiguration
-import Security
 
 struct ProxyEndpoint: Codable,Equatable {
     var Scheme:String, Host:String, Port:Int, User:String, Password:String
@@ -191,24 +192,70 @@ enum SystemRoute {
     }
 }
 
+enum LocalVault {
+    private static let hardwareID: String = {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+        if service != 0 {
+            defer { IOObjectRelease(service) }
+            if let prop = IORegistryEntryCreateCFProperty(service, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String, !prop.isEmpty {
+                return prop
+            }
+        }
+        return Host.current().localizedName ?? "local-mac"
+    }()
+
+    private static func folder() throws -> URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AI Exit Guard/vault", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        return dir
+    }
+
+    private static func key(for name: String) -> SymmetricKey {
+        let material = Data("local.aiexitguard.vault.v1|\(hardwareID)|\(NSUserName())|\(name)".utf8)
+        return SymmetricKey(data: SHA256.hash(data: material))
+    }
+
+    private static func fileURL(for name: String) throws -> URL {
+        try folder().appendingPathComponent("\(name).vault")
+    }
+
+    static func save(_ data: Data, name: String) throws {
+        let sealed = try AES.GCM.seal(data, using: key(for: name))
+        guard let combined = sealed.combined else { throw ProxyIssue("Не удалось зашифровать данные.") }
+        let url = try fileURL(for: name)
+        try combined.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    static func read(name: String) throws -> Data? {
+        let url = try fileURL(for: name)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let combined = try Data(contentsOf: url)
+        let box = try AES.GCM.SealedBox(combined: combined)
+        return try AES.GCM.open(box, using: key(for: name))
+    }
+
+    static func clear(name: String) {
+        if let url = try? fileURL(for: name) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
 enum ProxyVault {
-    static var query:[String:Any]{[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"local.aiexitguard.proxy",kSecAttrAccount as String:"current"]}
+    private static let vaultName = "proxy"
     static func save(_ data:Data)throws {
-        let attrs=[kSecValueData as String:data]
-        var status=SecItemUpdate(query as CFDictionary,attrs as CFDictionary)
-        if status==errSecItemNotFound {var q=query;q[kSecValueData as String]=data;q[kSecAttrAccessible as String]=kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;status=SecItemAdd(q as CFDictionary,nil)}
-        guard status==errSecSuccess else {throw ProxyIssue("Связка ключей не сохранила прокси.")}
+        do { try LocalVault.save(data, name: vaultName) }
+        catch { throw ProxyIssue("Не удалось сохранить прокси в локальное хранилище.") }
     }
     static func readForUpdate()throws -> Data? {
-        var q=query;q[kSecReturnData as String]=true
-        var item:CFTypeRef?
-        let status=SecItemCopyMatching(q as CFDictionary,&item)
-        if status==errSecItemNotFound{return nil}
-        guard status==errSecSuccess,let data=item as? Data else{throw ProxyIssue("Связка ключей недоступна. Откройте её и повторите попытку.")}
-        return data
+        do { return try LocalVault.read(name: vaultName) }
+        catch { throw ProxyIssue("Не удалось прочитать сохранённый прокси. Переподключите его в настройках.") }
     }
     static func read()->Data? {try? readForUpdate()}
-    static func clear(){SecItemDelete(query as CFDictionary)}
+    static func clear(){ LocalVault.clear(name: vaultName) }
 }
 
 final class ProxyClient:ObservableObject {
@@ -522,7 +569,7 @@ final class ProxyClient:ObservableObject {
     }
     func restore(){
         guard !expected.isEmpty else{return}
-        do {guard let stored=ProxyVault.read() else{throw ProxyIssue("Откройте связку ключей и переподключите прокси.")}
+        do {guard let stored=ProxyVault.read() else{throw ProxyIssue("Сохранённый прокси не найден. Переподключите его в настройках.")}
             let data=try JSONEncoder().encode(ProxyPlan.load(stored))
             do {try relay(data)} catch {retryRelay(data);return}
             finishRestore()
@@ -569,7 +616,7 @@ final class ProxyClient:ObservableObject {
     func resumeSaved(){
         guard paused,!busy else{return}
         do {
-            guard let data=ProxyVault.read(),!savedIP.isEmpty else {throw ProxyIssue("Не удалось открыть сохранённый прокси в Связке ключей.")}
+            guard let data=ProxyVault.read(),!savedIP.isEmpty else {throw ProxyIssue("Не удалось открыть сохранённый прокси.")}
             try activate(ProxyPlan.load(data),pin:savedIP,id:try loadLibrary().current)
         }catch{message=error.localizedDescription}
     }

@@ -1,5 +1,4 @@
 import AppKit
-import Security
 import SwiftUI
 
 struct StoreProduct: Codable, Identifiable {
@@ -47,17 +46,9 @@ private struct StoreOrderReport: Decodable {
 }
 
 enum StoreVault {
-    static var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "local.aiexitguard.store",
-         kSecAttrAccount as String: "purchases"]
-    }
+    private static let vaultName = "store"
     static func load() -> [StorePurchased] {
-        var q = query
-        q[kSecReturnData as String] = true
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
+        guard let data = try? LocalVault.read(name: vaultName),
               let decoded = try? JSONDecoder().decode([StorePurchased].self, from: data) else {
             return []
         }
@@ -65,15 +56,7 @@ enum StoreVault {
     }
     static func save(_ items: [StorePurchased]) {
         guard let data = try? JSONEncoder().encode(items) else { return }
-        let attrs = [kSecValueData as String: data]
-        var status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
-        if status == errSecItemNotFound {
-            var q = query
-            q[kSecValueData as String] = data
-            q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            status = SecItemAdd(q as CFDictionary, nil)
-        }
-        _ = status
+        try? LocalVault.save(data, name: vaultName)
     }
 }
 

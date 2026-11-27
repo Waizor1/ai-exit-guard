@@ -24,32 +24,55 @@ enum Recommendation: Int, CaseIterable {
         case .avoid: return .systemRed
         }
     }
-    var trayIcon:NSImage {
-        let image=NSImage(size:NSSize(width:20,height:18),flipped:false){ _ in
-            let shield=NSBezierPath()
-            shield.move(to:NSPoint(x:10,y:17))
-            shield.line(to:NSPoint(x:18,y:14))
-            shield.line(to:NSPoint(x:17.5,y:8))
-            shield.curve(to:NSPoint(x:10,y:1),controlPoint1:NSPoint(x:17,y:5),controlPoint2:NSPoint(x:13,y:2))
-            shield.curve(to:NSPoint(x:2.5,y:8),controlPoint1:NSPoint(x:7,y:2),controlPoint2:NSPoint(x:3,y:5))
-            shield.line(to:NSPoint(x:2,y:14));shield.close()
-            self.color.setFill();shield.fill()
-            let mark=NSBezierPath()
-            mark.lineWidth=2;mark.lineCapStyle = .round;mark.lineJoinStyle = .round
-            switch self {
-            case .clear:
-                mark.move(to:NSPoint(x:6.4,y:9));mark.line(to:NSPoint(x:9,y:6.5));mark.line(to:NSPoint(x:13.8,y:12))
-            case .caution:
-                mark.move(to:NSPoint(x:10,y:12.8));mark.line(to:NSPoint(x:10,y:9))
-                mark.move(to:NSPoint(x:10,y:6));mark.line(to:NSPoint(x:10,y:5.9))
-            case .avoid:
-                mark.move(to:NSPoint(x:7.4,y:11.7));mark.line(to:NSPoint(x:12.6,y:6.5))
-                mark.move(to:NSPoint(x:12.6,y:11.7));mark.line(to:NSPoint(x:7.4,y:6.5))
+    static func trayIcon(state: Recommendation, proxyOnly: Bool, paused: Bool, running: Bool) -> NSImage {
+        let width: CGFloat = running ? 36 : 18
+        let isTemplate = paused || proxyOnly || state == .clear
+        let image = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
+            let shield = NSBezierPath()
+            shield.move(to: NSPoint(x: 9.0, y: 16.2))
+            shield.line(to: NSPoint(x: 14.8, y: 14.0))
+            shield.curve(to: NSPoint(x: 15.2, y: 13.2), controlPoint1: NSPoint(x: 15.1, y: 13.85), controlPoint2: NSPoint(x: 15.2, y: 13.55))
+            shield.line(to: NSPoint(x: 15.2, y: 9.5))
+            shield.curve(to: NSPoint(x: 9.0, y: 1.9), controlPoint1: NSPoint(x: 15.2, y: 5.9), controlPoint2: NSPoint(x: 12.6, y: 3.1))
+            shield.curve(to: NSPoint(x: 2.8, y: 9.5), controlPoint1: NSPoint(x: 5.4, y: 3.1), controlPoint2: NSPoint(x: 2.8, y: 5.9))
+            shield.line(to: NSPoint(x: 2.8, y: 13.2))
+            shield.curve(to: NSPoint(x: 3.2, y: 14.0), controlPoint1: NSPoint(x: 2.8, y: 13.55), controlPoint2: NSPoint(x: 2.9, y: 13.85))
+            shield.close()
+            shield.lineWidth = 1.75
+            shield.lineJoinStyle = .round
+            shield.lineCapStyle = .round
+
+            let strokeColor: NSColor = isTemplate
+                ? NSColor.black.withAlphaComponent(paused ? 0.50 : 1.0)
+                : NSColor.labelColor
+            strokeColor.setStroke()
+            shield.stroke()
+
+            if paused {
+                let bars = NSBezierPath()
+                bars.move(to: NSPoint(x: 7.4, y: 11.4)); bars.line(to: NSPoint(x: 7.4, y: 7.4))
+                bars.move(to: NSPoint(x: 10.6, y: 11.4)); bars.line(to: NSPoint(x: 10.6, y: 7.4))
+                bars.lineWidth = 1.65
+                bars.lineCapStyle = .round
+                strokeColor.setStroke()
+                bars.stroke()
+            } else {
+                let coreColor: NSColor
+                if isTemplate {
+                    coreColor = NSColor.black
+                } else if state == .avoid {
+                    coreColor = NSColor(srgbRed: 0.98, green: 0.34, blue: 0.34, alpha: 1.0)
+                } else {
+                    coreColor = NSColor(srgbRed: 0.98, green: 0.72, blue: 0.14, alpha: 1.0)
+                }
+                let r: CGFloat = isTemplate ? 2.15 : 2.35
+                let dot = NSBezierPath(ovalIn: NSRect(x: 9.0 - r, y: 9.3 - r, width: r * 2, height: r * 2))
+                coreColor.setFill()
+                dot.fill()
             }
-            NSColor(white:0.09,alpha:1).setStroke();mark.stroke()
             return true
         }
-        image.isTemplate=false
+        image.isTemplate = isTemplate
         return image
     }
     static func summarize(_ routes: [Self]) -> Self {
