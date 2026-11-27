@@ -236,7 +236,8 @@ struct StoreView: View {
                     Divider()
                     storeRow(icon: "sparkles", tint: .orange, title: "Аккаунт Claude",
                              subtitle: "Верифицированный · можно сразу с IP") { store.screen = "claude" }
-                }.background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
+                }.background(Color(red: 25/255, green: 27/255, blue: 33/255), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
 
                 VStack(spacing: 0) {
                     storeRow(icon: "checkmark.seal.fill", tint: .green, title: "Мои покупки",
@@ -244,7 +245,8 @@ struct StoreView: View {
                              trailing: store.purchases.isEmpty ? "" : "\(store.purchases.count)") {
                         store.screen = "purchases"
                     }
-                }.background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
+                }.background(Color(red: 25/255, green: 27/255, blue: 33/255), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
             } else if store.screen == "proxy" {
                 let prod = store.product("proxy")
                 let countries = prod?.countries ?? ["Нидерланды", "Германия", "США", "Финляндия", "Великобритания", "Сингапур", "Япония"]

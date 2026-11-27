@@ -29,6 +29,17 @@ struct GuardPanel: View {
     private var appVersion: String? {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     }
+    private var obsidianBg: Color { Color(red: 17/255, green: 18/255, blue: 22/255) }
+    private var obsidianCard: Color { Color(red: 25/255, green: 27/255, blue: 33/255) }
+    private var ambientGlowColor: Color {
+        if model.store.isOpen { return Color.blue.opacity(0.16) }
+        if paused(model.selectedService) || needsProxy(model.selectedService) || proxyMode { return Color.blue.opacity(0.11) }
+        switch verdict {
+        case .clear: return Color(red: 52/255, green: 211/255, blue: 153/255).opacity(0.15)
+        case .caution: return Color(red: 245/255, green: 158/255, blue: 11/255).opacity(0.15)
+        case .avoid: return Color(red: 248/255, green: 113/255, blue: 113/255).opacity(0.16)
+        }
+    }
     var body:some View {
         VStack(alignment:.leading,spacing:12) {
             HStack {
@@ -237,8 +248,8 @@ struct GuardPanel: View {
                         serviceRow("Antigravity","sparkles",.indigo)
                     }
                     .padding(12)
-                    .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.primary.opacity(0.085), lineWidth: 1))
+                    .background(obsidianCard,in:RoundedRectangle(cornerRadius:12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
                 }
                 if model.selectedService == nil {
                     MainProxyCard(monitor:model,proxy:proxy)
@@ -250,8 +261,8 @@ struct GuardPanel: View {
                             Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 12).padding(.vertical, 9)
-                        .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.primary.opacity(0.085), lineWidth: 1))
+                        .background(obsidianCard,in:RoundedRectangle(cornerRadius:12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
                         .contentShape(Rectangle())
                     }.buttonStyle(.plain)
                     VectraConnectBanner()
@@ -270,6 +281,13 @@ struct GuardPanel: View {
                 }
             }
         }.padding(18).frame(width:408).fixedSize(horizontal:false,vertical:true)
+        .background(
+            ZStack(alignment: .top) {
+                obsidianBg
+                RadialGradient(colors: [ambientGlowColor, Color.clear], center: .top, startRadius: 10, endRadius: 240)
+            }
+        )
+        .preferredColorScheme(.dark)
         .onAppear { model.updater.checkOnce() }
     }
     func usage(_ label:String,_ host:String)->some View {
@@ -404,10 +422,10 @@ private struct VectraConnectBanner:View {
         }
         .padding(12)
         .background(
-            LinearGradient(colors: [Color.blue.opacity(0.14), Color.primary.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            LinearGradient(colors: [Color(red: 37/255, green: 99/255, blue: 235/255).opacity(0.20), Color(red: 24/255, green: 28/255, blue: 38/255)], startPoint: .topLeading, endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius:12, style: .continuous)
         )
-        .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.blue.opacity(0.24), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.blue.opacity(0.26), lineWidth: 1))
     }
 }
 
@@ -546,8 +564,8 @@ private struct MainProxyCard:View {
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
             }
         }.padding(12)
-         .background(Color.primary.opacity(0.045),in:RoundedRectangle(cornerRadius:12, style: .continuous))
-         .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.primary.opacity(0.085), lineWidth: 1))
+         .background(Color(red: 25/255, green: 27/255, blue: 33/255),in:RoundedRectangle(cornerRadius:12, style: .continuous))
+         .overlay(RoundedRectangle(cornerRadius:12, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
 
     }
 }

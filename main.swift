@@ -755,11 +755,14 @@ final class GuardDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow=true
         panel.isOpaque=false
         panel.backgroundColor = .clear
+        panel.appearance = NSAppearance(named: .darkAqua)
         scroll.contentView=TopAlignedClip()
         scroll.wantsLayer=true
         scroll.layer?.cornerRadius=15
         scroll.layer?.masksToBounds=true
-        scroll.backgroundColor = .windowBackgroundColor
+        scroll.layer?.borderWidth=1
+        scroll.layer?.borderColor=NSColor(white: 1, alpha: 0.11).cgColor
+        scroll.backgroundColor = NSColor(srgbRed: 17/255, green: 18/255, blue: 22/255, alpha: 1)
         scroll.hasVerticalScroller=true
         scroll.autohidesScrollers=true
         scroll.scrollerStyle = .overlay
